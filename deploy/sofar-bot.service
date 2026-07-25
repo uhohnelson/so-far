@@ -1,0 +1,24 @@
+[Unit]
+Description=Sofar Telegram bot
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APPDIR__
+EnvironmentFile=__APPDIR__/.env
+ExecStart=__APPDIR__/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+# Keep the bot from starving a 1 GB VPS
+MemoryMax=350M
+MemoryHigh=250M
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
