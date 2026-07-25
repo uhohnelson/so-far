@@ -3,13 +3,14 @@ import {
   episodeName as cachedEpisodeName,
   getCachedSeason,
   loadSeasonEpisodes,
+  mapLimit,
 } from '../seasonCache'
 import type { Episode, LibraryItem, MediaType } from '../types'
 import { WatchListSkeleton } from './Skeletons'
 
 function thumbUrl(url: string | null): string | null {
   if (!url) return null
-  return url.replace('/w500/', '/w185/')
+  return url.replace(/\/w(500|342)\//, '/w185/')
 }
 
 function daysUntil(dateStr: string | null): number | null {
@@ -319,15 +320,13 @@ export default function WatchList({
           season: item.current_season!,
         })
       }
-      await Promise.all(
-        [...seasons.values()].map(async ({ tmdbId, season }) => {
-          try {
-            await loadSeasonEpisodes(tmdbId, season)
-          } catch {
-            // leave names blank
-          }
-        }),
-      )
+      await mapLimit([...seasons.values()], 4, async ({ tmdbId, season }) => {
+        try {
+          await loadSeasonEpisodes(tmdbId, season)
+        } catch {
+          // leave names blank
+        }
+      })
       if (cancelled) return
       setEpNames((prev) => {
         const next = { ...prev }
@@ -357,18 +356,14 @@ export default function WatchList({
     let cancelled = false
     setUpcoming(null)
     ;(async () => {
-      const rows: UpcomingRow[] = []
-      await Promise.all(
-        candidates.map(async (item) => {
+      const rows = (
+        await mapLimit(candidates, 4, async (item) => {
           if (item.title.media_type === 'movie') {
-            const row = movieUpcoming(item)
-            if (row) rows.push(row)
-            return
+            return movieUpcoming(item)
           }
-          const row = await resolveTvUpcoming(item)
-          if (row) rows.push(row)
-        }),
-      )
+          return resolveTvUpcoming(item)
+        })
+      ).filter((row): row is UpcomingRow => row != null)
       if (cancelled) return
       rows.sort((a, b) => a.days - b.days || a.date.localeCompare(b.date))
       setUpcoming(rows)

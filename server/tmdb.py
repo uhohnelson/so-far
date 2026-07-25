@@ -76,6 +76,7 @@ class TitleDetail:
 class TmdbClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._season_cache: dict[tuple[int, int], list[EpisodeInfo]] = {}
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         query = {"api_key": self.settings.tmdb_api_key}
@@ -261,10 +262,15 @@ class TmdbClient:
         )
 
     def get_season_episodes(self, tmdb_id: int, season: int) -> list[EpisodeInfo]:
+        cache_key = (tmdb_id, season)
+        hit = self._season_cache.get(cache_key)
+        if hit is not None:
+            return hit
         try:
             data = self._get(f"/tv/{tmdb_id}/season/{season}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
+                self._season_cache[cache_key] = []
                 return []
             raise
         episodes: list[EpisodeInfo] = []
@@ -280,7 +286,9 @@ class TmdbClient:
                     runtime=ep.get("runtime"),
                 )
             )
-        return [e for e in episodes if e.episode > 0]
+        result = [e for e in episodes if e.episode > 0]
+        self._season_cache[cache_key] = result
+        return result
 
     def get_episode(self, tmdb_id: int, season: int, episode: int) -> EpisodeInfo | None:
         try:

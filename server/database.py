@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from server.config import get_settings
 
@@ -23,8 +24,19 @@ def _ensure_sqlite_dir(url: str) -> None:
 settings = get_settings()
 _ensure_sqlite_dir(settings.database_url)
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-engine = create_engine(settings.database_url, connect_args=connect_args)
+_is_sqlite = settings.database_url.startswith("sqlite")
+connect_args = {"check_same_thread": False} if _is_sqlite else {}
+
+# SQLite cannot take a QueuePool under concurrent FastAPI requests: each
+# season/TMDB call was holding a connection and exhausting the pool (30s waits).
+if _is_sqlite:
+    engine = create_engine(
+        settings.database_url,
+        connect_args=connect_args,
+        poolclass=StaticPool,
+    )
+else:
+    engine = create_engine(settings.database_url, connect_args=connect_args)
 
 
 @event.listens_for(engine, "connect")

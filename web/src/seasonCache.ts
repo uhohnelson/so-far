@@ -25,6 +25,29 @@ export function setCachedSeason(
   cache.set(key(tmdbId, season), episodes)
 }
 
+/** Run async work with a hard concurrency cap. */
+export async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const results = new Array<R>(items.length)
+  let next = 0
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (true) {
+        const i = next++
+        if (i >= items.length) return
+        results[i] = await fn(items[i], i)
+      }
+    },
+  )
+  await Promise.all(workers)
+  return results
+}
+
 /** Deduped season fetch shared by WatchList + DetailSheet. */
 export function loadSeasonEpisodes(
   tmdbId: number,

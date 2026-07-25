@@ -19,7 +19,7 @@ function splitMinutes(minutes: number) {
 
 function thumbUrl(url: string | null): string | null {
   if (!url) return null
-  return url.replace('/w500/', '/w185/')
+  return url.replace(/\/w(500|342)\//, '/w185/')
 }
 
 export default function Profile({

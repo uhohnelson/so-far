@@ -77,7 +77,7 @@ def create_app() -> FastAPI:
         except json.JSONDecodeError:
             return {}
 
-    def _title_out(title: Title) -> TitleOut:
+    def _title_out(title: Title, *, lite: bool = False) -> TitleOut:
         meta = _meta(title)
         seasons_raw = meta.get("seasons") or []
         seasons = [
@@ -91,35 +91,47 @@ def create_app() -> FastAPI:
             for s in seasons_raw
             if s.get("season_number") is not None
         ] or None
-        cast = [
-            CastOut(
-                id=c["id"],
-                name=c["name"],
-                character=c.get("character"),
-                profile_url=tmdb.poster_url(c.get("profile_path"), size="w185"),
+        if lite:
+            cast: list[CastOut] = []
+            providers: list[ProviderOut] = []
+            trailer_url = None
+            overview = None
+            tagline = None
+        else:
+            cast = [
+                CastOut(
+                    id=c["id"],
+                    name=c["name"],
+                    character=c.get("character"),
+                    profile_url=tmdb.poster_url(c.get("profile_path"), size="w185"),
+                )
+                for c in meta.get("cast") or []
+            ]
+            providers = [
+                ProviderOut(
+                    name=p["name"],
+                    logo_url=tmdb.poster_url(p.get("logo_path"), size="w92"),
+                )
+                for p in meta.get("providers") or []
+                if p.get("name")
+            ]
+            trailer_key = meta.get("trailer_key")
+            trailer_url = (
+                f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
             )
-            for c in meta.get("cast") or []
-        ]
-        providers = [
-            ProviderOut(
-                name=p["name"],
-                logo_url=tmdb.poster_url(p.get("logo_path"), size="w92"),
-            )
-            for p in meta.get("providers") or []
-            if p.get("name")
-        ]
-        trailer_key = meta.get("trailer_key")
+            overview = title.overview
+            tagline = meta.get("tagline")
         return TitleOut(
             id=title.id,
             tmdb_id=title.tmdb_id,
             media_type=title.media_type,
             title=title.title,
             year=title.year,
-            overview=title.overview,
+            overview=overview,
             poster_path=title.poster_path,
-            poster_url=tmdb.poster_url(title.poster_path),
+            poster_url=tmdb.poster_url(title.poster_path, size="w342"),
             backdrop_url=tmdb.poster_url(meta.get("backdrop_path"), size="w780"),
-            tagline=meta.get("tagline"),
+            tagline=tagline,
             genres=meta.get("genres") or [],
             runtime=meta.get("runtime"),
             status=meta.get("status"),
@@ -130,9 +142,7 @@ def create_app() -> FastAPI:
             seasons=seasons,
             cast=cast,
             release_date=meta.get("release_date"),
-            trailer_url=(
-                f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
-            ),
+            trailer_url=trailer_url,
             providers=providers,
         )
 
@@ -154,7 +164,7 @@ def create_app() -> FastAPI:
             status=row.status,
             current_season=row.current_season,
             current_episode=row.current_episode,
-            title=_title_out(row.title),
+            title=_title_out(row.title, lite=True),
         )
 
     def _find_library(db: Session, user: User, title: Title) -> UserTitle | None:
