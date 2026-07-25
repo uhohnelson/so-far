@@ -81,84 +81,161 @@ input {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 24px;
-  text-align: center;
-  background:
-    linear-gradient(180deg, var(--yellow) 0%, #ffe566 42%, var(--paper) 42%);
+  background: var(--paper);
+  color: var(--ink);
 }
 
-.login .mark {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  background: var(--ink);
-  color: var(--yellow);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  font-size: 28px;
-  margin-bottom: 14px;
+.login-hero {
+  background: var(--yellow);
+  padding: 48px 24px 36px;
+  text-align: left;
 }
 
-.login .brand {
-  font-size: 42px;
-  font-weight: 800;
+.login-brand {
+  font-size: 40px;
+  font-weight: 900;
   letter-spacing: -0.04em;
-  margin-bottom: 6px;
+  line-height: 1;
+  color: var(--yellow-ink);
 }
 
-.login .tagline {
-  color: var(--muted);
-  margin-bottom: 28px;
+.login-tagline {
+  margin-top: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(26, 20, 0, 0.7);
   max-width: 280px;
 }
 
-.login .steps {
-  text-align: left;
-  color: var(--muted);
-  font-size: 14px;
-  margin-bottom: 18px;
-  width: min(280px, 100%);
+.login-body {
+  flex: 1;
+  padding: 28px 24px 24px;
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
 }
 
-.login .steps li {
-  margin: 8px 0 8px 18px;
+.login-title {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.login-lead {
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 22px;
+}
+
+.login-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0 0 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.login-steps li {
+  counter-increment: step;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+.login-steps li:last-child {
+  border-bottom: none;
+}
+
+.login-steps li::before {
+  content: counter(step);
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
 }
 
 .login code {
   background: var(--soft);
   padding: 2px 7px;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--ink);
-  font-weight: 700;
+  font-weight: 800;
   font-size: 13px;
+  font-family: inherit;
+}
+
+.login-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
 }
 
 .code-input {
-  width: min(260px, 100%);
-  padding: 14px;
+  width: 100%;
+  padding: 16px 14px;
   text-align: center;
   font-size: 28px;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
   font-weight: 800;
   background: var(--paper);
   border: 2px solid var(--ink);
-  border-radius: 12px;
+  border-radius: 4px;
   outline: none;
 }
 
 .code-input:focus {
   border-color: var(--yellow);
-  box-shadow: 0 0 0 3px rgba(255, 212, 0, 0.45);
+  box-shadow: 0 0 0 3px rgba(255, 212, 0, 0.35);
+}
+
+.login-error {
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 12px;
+}
+
+.login-submit {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--yellow);
+  color: var(--yellow-ink);
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .primary-btn {
   margin-top: 16px;
   padding: 13px 36px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--yellow);
   color: var(--yellow-ink);
   font-weight: 800;
@@ -169,12 +246,6 @@ input {
 .primary-btn:disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-.login .error {
-  color: var(--danger);
-  font-size: 14px;
-  margin-top: 14px;
 }
 
 /* ---- Top tabs (watch list) ---- */
