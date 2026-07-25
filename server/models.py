@@ -36,11 +36,17 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cover_title_id: Mapped[int | None] = mapped_column(
+        ForeignKey("titles.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    library: Mapped[list[UserTitle]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    library: Mapped[list["UserTitle"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    cover_title: Mapped["Title | None"] = relationship(foreign_keys=[cover_title_id])
 
 
 class Title(Base):

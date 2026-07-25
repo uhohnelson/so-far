@@ -83,6 +83,8 @@ export interface TitleDetail {
 export interface User {
   id: number
   display_name: string | null
+  cover_title_id: number | null
+  cover_url: string | null
 }
 
 export interface Stats {

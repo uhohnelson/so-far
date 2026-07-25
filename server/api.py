@@ -32,6 +32,7 @@ from server.schemas import (
     TitleDetailOut,
     TitleOut,
     UserOut,
+    UserUpdateIn,
 )
 from server.tmdb import TmdbClient
 
@@ -163,6 +164,25 @@ def create_app() -> FastAPI:
             )
         )
 
+    def _user_out(user: User, db: Session | None = None) -> UserOut:
+        cover_url = None
+        cover_title = None
+        if user.cover_title_id is not None:
+            cover_title = user.cover_title
+            if cover_title is None and db is not None:
+                cover_title = db.get(Title, user.cover_title_id)
+        if cover_title is not None:
+            meta = _meta(cover_title)
+            cover_url = tmdb.poster_url(meta.get("backdrop_path"), size="w780") or tmdb.poster_url(
+                cover_title.poster_path, size="w780"
+            )
+        return UserOut(
+            id=user.id,
+            display_name=user.display_name,
+            cover_title_id=user.cover_title_id,
+            cover_url=cover_url,
+        )
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -175,7 +195,7 @@ def create_app() -> FastAPI:
                 status_code=401,
                 detail="Code is wrong or expired. Get a fresh one from the bot with /app.",
             )
-        return AuthOut(token=token.token, user=UserOut.model_validate(token.user))
+        return AuthOut(token=token.token, user=_user_out(token.user, db))
 
     @app.post("/api/auth/logout")
     def logout(
@@ -187,8 +207,38 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/me", response_model=UserOut)
-    def me(user: User = Depends(current_user)) -> UserOut:
-        return UserOut.model_validate(user)
+    def me(user: User = Depends(current_user), db: Session = Depends(get_db)) -> UserOut:
+        return _user_out(user, db)
+
+    @app.patch("/api/me", response_model=UserOut)
+    def update_me(
+        body: UserUpdateIn,
+        user: User = Depends(current_user),
+        db: Session = Depends(get_db),
+    ) -> UserOut:
+        if "cover_title_id" not in body.model_fields_set:
+            return _user_out(user, db)
+        if body.cover_title_id is None:
+            user.cover_title_id = None
+        else:
+            title = db.get(Title, body.cover_title_id)
+            if title is None:
+                raise HTTPException(status_code=404, detail="Title not found.")
+            owned = db.scalar(
+                select(UserTitle).where(
+                    UserTitle.user_id == user.id,
+                    UserTitle.title_id == title.id,
+                )
+            )
+            if owned is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pick a cover from something on your list.",
+                )
+            user.cover_title_id = title.id
+        db.commit()
+        db.refresh(user)
+        return _user_out(user, db)
 
     @app.get("/api/stats", response_model=StatsOut)
     def stats(

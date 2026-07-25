@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { MediaType, SearchResult } from '../types'
+import { SearchSkeleton, ShelfSkeleton } from './Skeletons'
 
 interface DiscoverProps {
   onOpen: (result: SearchResult) => void
@@ -154,7 +155,9 @@ export default function Discover({
         <span className="see-all">{subtitle}</span>
       </div>
       {items === null ? (
-        <div className="shelf-loading" aria-label={`Loading ${title}`} />
+        <div aria-label={`Loading ${title}`}>
+          <ShelfSkeleton />
+        </div>
       ) : items.length === 0 ? (
         <div className="shelf-empty">Nothing available right now.</div>
       ) : (
@@ -210,7 +213,7 @@ export default function Discover({
 
       {searching ? (
         <>
-          {loading && <div className="spinner" />}
+          {loading && <SearchSkeleton />}
           {!loading && results?.length === 0 && (
             <div className="empty">No results for “{query.trim()}”.</div>
           )}

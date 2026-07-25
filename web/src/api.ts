@@ -72,6 +72,12 @@ export const api = {
 
   me: () => request<User>('/me'),
 
+  updateMe: (body: { cover_title_id: number | null }) =>
+    request<User>('/me', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
   stats: () => request<Stats>('/stats'),
 
   search: (q: string, mediaType?: MediaType) =>

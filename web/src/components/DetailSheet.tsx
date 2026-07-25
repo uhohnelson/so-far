@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import {
+  getCachedSeason,
+  loadSeasonEpisodes,
+  setCachedSeason,
+} from '../seasonCache'
 import type {
   Episode,
   LibraryItem,
@@ -8,6 +13,7 @@ import type {
   Title,
   TitleDetail,
 } from '../types'
+import { DetailBodySkeleton, SeasonEpisodesSkeleton } from './Skeletons'
 
 export type SheetTarget =
   | { kind: 'library'; item: LibraryItem }
@@ -18,6 +24,54 @@ interface DetailSheetProps {
   onClose: () => void
   onMutated: (updated: LibraryItem | null, message?: string) => void
   onError: (message: string) => void
+}
+
+function emptyTitle(partial: Partial<Title> & Pick<Title, 'tmdb_id' | 'media_type' | 'title'>): Title {
+  return {
+    id: 0,
+    year: null,
+    overview: null,
+    poster_url: null,
+    backdrop_url: null,
+    tagline: null,
+    genres: [],
+    runtime: null,
+    status: null,
+    vote_average: null,
+    networks: [],
+    number_of_seasons: null,
+    number_of_episodes: null,
+    seasons: null,
+    cast: [],
+    release_date: null,
+    trailer_url: null,
+    providers: [],
+    ...partial,
+  }
+}
+
+function seedFromTarget(target: SheetTarget): TitleDetail {
+  if (target.kind === 'library') {
+    return {
+      title: target.item.title,
+      library_item: target.item,
+      watched_episodes: [],
+    }
+  }
+  const r = target.result
+  return {
+    title: emptyTitle({
+      tmdb_id: r.tmdb_id,
+      media_type: r.media_type,
+      title: r.title,
+      year: r.year,
+      overview: r.overview,
+      poster_url: r.poster_url,
+      backdrop_url: r.backdrop_url,
+    }),
+    library_item: null,
+    watched_episodes: [],
+  }
 }
 
 export default function DetailSheet({
@@ -35,8 +89,8 @@ export default function DetailSheet({
       ? target.item.title.tmdb_id
       : target.result.tmdb_id
 
-  const [detail, setDetail] = useState<TitleDetail | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [detail, setDetail] = useState<TitleDetail>(() => seedFromTarget(target))
+  const [hydrating, setHydrating] = useState(true)
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState<'about' | 'episodes'>(
     seedType === 'tv' ? 'episodes' : 'about',
@@ -52,11 +106,17 @@ export default function DetailSheet({
   } | null>(null)
 
   const loadSeason = async (tmdbId: number, seasonNumber: number) => {
+    const cached = getCachedSeason(tmdbId, seasonNumber)
+    if (cached) {
+      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: cached }))
+      return
+    }
     setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: 'loading' }))
     try {
-      const res = await api.seasonEpisodes(tmdbId, seasonNumber)
-      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: res.episodes }))
+      const episodes = await loadSeasonEpisodes(tmdbId, seasonNumber)
+      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: episodes }))
     } catch {
+      setCachedSeason(tmdbId, seasonNumber, [])
       setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: [] }))
     }
   }
@@ -76,24 +136,31 @@ export default function DetailSheet({
     return refreshed
   }
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      const d = await api.titleDetail(seedType, seedId)
-      setDetail(d)
-      setOpenSeason(null)
-      setEpisodesBySeason({})
-      setTab(d.title.media_type === 'tv' ? 'episodes' : 'about')
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Could not load title.')
-      onClose()
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    load()
+    let cancelled = false
+    setDetail(seedFromTarget(target))
+    setHydrating(true)
+    setOpenSeason(null)
+    setEpisodesBySeason({})
+    setTab(seedType === 'tv' ? 'episodes' : 'about')
+    setConfirm(null)
+    ;(async () => {
+      try {
+        const d = await api.titleDetail(seedType, seedId)
+        if (cancelled) return
+        setDetail(d)
+        setTab(d.title.media_type === 'tv' ? 'episodes' : 'about')
+      } catch (err) {
+        if (cancelled) return
+        onError(err instanceof Error ? err.message : 'Could not load title.')
+        onClose()
+      } finally {
+        if (!cancelled) setHydrating(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedType, seedId])
 
@@ -383,9 +450,7 @@ export default function DetailSheet({
         role="dialog"
         aria-label={title?.title || 'Title'}
       >
-        {loading || !title ? (
-          <div className="spinner" />
-        ) : (
+        {title ? (
           <>
             <div
               className="hero"
@@ -407,6 +472,10 @@ export default function DetailSheet({
               </div>
             </div>
 
+            {hydrating && !title.seasons && title.media_type === 'tv' ? (
+              <DetailBodySkeleton />
+            ) : (
+              <>
             <div
               className="progress-rule"
               role="progressbar"
@@ -635,7 +704,7 @@ export default function DetailSheet({
                           {isOpen && (
                             <div className="season-body">
                               {cached === 'loading' || cached == null ? (
-                                <div className="spinner" />
+                                <SeasonEpisodesSkeleton />
                               ) : cached.length === 0 ? (
                                 <div className="empty">
                                   No episodes found for this season.
@@ -713,12 +782,16 @@ export default function DetailSheet({
                 type="button"
                 className="sheet-add-bar"
                 onClick={add}
-                disabled={busy}
+                disabled={busy || hydrating}
               >
                 + Add {title.media_type === 'movie' ? 'movie' : 'show'}
               </button>
             )}
+              </>
+            )}
           </>
+        ) : (
+          <DetailBodySkeleton />
         )}
       </div>
 

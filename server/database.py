@@ -40,9 +40,25 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db() -> None:
+    from sqlalchemy import inspect, text
+
     from server import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight SQLite column adds for existing installs.
+    if settings.database_url.startswith("sqlite"):
+        insp = inspect(engine)
+        if "users" in insp.get_table_names():
+            cols = {c["name"] for c in insp.get_columns("users")}
+            if "cover_title_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE users ADD COLUMN cover_title_id INTEGER "
+                            "REFERENCES titles(id) ON DELETE SET NULL"
+                        )
+                    )
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -8,12 +8,18 @@ import Profile from './components/Profile'
 import NotFound from './components/NotFound'
 import DetailSheet, { type SheetTarget } from './components/DetailSheet'
 
-type Tab = 'episodes' | 'discover' | 'profile'
+type Tab = 'shows' | 'movies' | 'discover' | 'profile'
 
 export default function App() {
   const path = window.location.pathname
   const [authed, setAuthed] = useState(() => getToken() !== null)
-  const [tab, setTab] = useState<Tab>('episodes')
+  const [tab, setTab] = useState<Tab>('shows')
+  const [visited, setVisited] = useState<Record<Tab, boolean>>({
+    shows: true,
+    movies: false,
+    discover: false,
+    profile: false,
+  })
   const [items, setItems] = useState<LibraryItem[] | null>(null)
   const [me, setMe] = useState<User | null>(null)
   const [sheet, setSheet] = useState<SheetTarget | null>(null)
@@ -25,10 +31,29 @@ export default function App() {
     setUnauthorizedHandler(() => setAuthed(false))
   }, [])
 
+  useEffect(() => {
+    setVisited((v) => (v[tab] ? v : { ...v, [tab]: true }))
+  }, [tab])
+
   const showToast = useCallback((message: string) => {
     setToast(message)
     window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), 3200)
+  }, [])
+
+  const patchItem = useCallback((updated: LibraryItem) => {
+    setItems((prev) => {
+      if (!prev) return [updated]
+      const idx = prev.findIndex((i) => i.id === updated.id)
+      if (idx === -1) return [updated, ...prev]
+      const next = [...prev]
+      next[idx] = updated
+      return next
+    })
+  }, [])
+
+  const removeItem = useCallback((id: number) => {
+    setItems((prev) => prev?.filter((i) => i.id !== id) ?? null)
   }, [])
 
   const refreshLibrary = useCallback(async () => {
@@ -53,7 +78,7 @@ export default function App() {
 
   const handleLoggedIn = () => {
     setAuthed(true)
-    setTab('episodes')
+    setTab('shows')
   }
 
   const handleLogout = async () => {
@@ -68,11 +93,14 @@ export default function App() {
   }
 
   const handleMutated = (updated: LibraryItem | null, message?: string) => {
-    refreshLibrary()
-    if (message) showToast(message)
-    if (sheet) {
-      setSheet(updated ? { kind: 'library', item: updated } : null)
+    if (updated) {
+      patchItem(updated)
+      if (sheet) setSheet({ kind: 'library', item: updated })
+    } else if (sheet?.kind === 'library') {
+      removeItem(sheet.item.id)
+      setSheet(null)
     }
+    if (message) showToast(message)
   }
 
   const openSearchResult = (result: SearchResult) => {
@@ -102,12 +130,12 @@ export default function App() {
         showToast(`Already on your list`)
         return
       }
-      await api.addToLibrary({
+      const added = await api.addToLibrary({
         tmdb_id: result.tmdb_id,
         media_type: result.media_type,
         status: result.media_type === 'tv' ? 'watching' : 'want',
       })
-      await refreshLibrary()
+      patchItem(added)
       showToast(`Added ${result.title}`)
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not add.')
@@ -118,12 +146,22 @@ export default function App() {
     setMarkingId(item.id)
     try {
       const res = await api.markWatched(item.id)
-      await refreshLibrary()
+      patchItem(res.item)
       showToast(res.message)
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not update.')
     } finally {
       setMarkingId(null)
+    }
+  }
+
+  const handleCoverChange = async (titleId: number) => {
+    try {
+      const updated = await api.updateMe({ cover_title_id: titleId })
+      setMe(updated)
+      showToast('Cover updated')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not update cover.')
     }
   }
 
@@ -133,41 +171,69 @@ export default function App() {
   return (
     <div className="app-bg">
       <div className="shell">
-        {tab === 'episodes' && (
+        <div className="tab-panel" hidden={tab !== 'shows'}>
           <WatchList
+            mediaType="tv"
             items={items}
             onOpen={(item) => setSheet({ kind: 'library', item })}
             onMark={markFromList}
             onGoDiscover={() => setTab('discover')}
             markingId={markingId}
           />
+        </div>
+        {visited.movies && (
+          <div className="tab-panel" hidden={tab !== 'movies'}>
+            <WatchList
+              mediaType="movie"
+              items={items}
+              onOpen={(item) => setSheet({ kind: 'library', item })}
+              onMark={markFromList}
+              onGoDiscover={() => setTab('discover')}
+              markingId={markingId}
+            />
+          </div>
         )}
-        {tab === 'discover' && (
-          <Discover
-            onOpen={openSearchResult}
-            onQuickAdd={quickAdd}
-            isAdded={(result) => findInLibrary(result) !== undefined}
-          />
+        {visited.discover && (
+          <div className="tab-panel" hidden={tab !== 'discover'}>
+            <Discover
+              onOpen={openSearchResult}
+              onQuickAdd={quickAdd}
+              isAdded={(result) => findInLibrary(result) !== undefined}
+            />
+          </div>
         )}
-        {tab === 'profile' && (
-          <Profile
-            items={items}
-            displayName={me?.display_name ?? null}
-            onOpen={(item) => setSheet({ kind: 'library', item })}
-            onLogout={handleLogout}
-          />
+        {visited.profile && (
+          <div className="tab-panel" hidden={tab !== 'profile'}>
+            <Profile
+              items={items}
+              me={me}
+              onOpen={(item) => setSheet({ kind: 'library', item })}
+              onCoverChange={handleCoverChange}
+              onLogout={handleLogout}
+            />
+          </div>
         )}
 
         <nav className="bottom-nav">
           <button
-            className={tab === 'episodes' ? 'active' : ''}
-            onClick={() => setTab('episodes')}
+            className={tab === 'shows' ? 'active' : ''}
+            onClick={() => setTab('shows')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              <rect x="3" y="5" width="18" height="13" rx="2" />
+              <path d="M8 21h8M12 18v3" />
             </svg>
-            Episodes
+            Shows
+          </button>
+          <button
+            className={tab === 'movies' ? 'active' : ''}
+            onClick={() => setTab('movies')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18v13H3z" />
+              <path d="M7 6V4l3 2 3-2 3 2 3-2v2" />
+            </svg>
+            Movies
           </button>
           <button
             className={tab === 'discover' ? 'active' : ''}

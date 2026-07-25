@@ -124,8 +124,14 @@ class ExchangeCodeIn(BaseModel):
 class UserOut(BaseModel):
     id: int
     display_name: str | None = None
+    cover_title_id: int | None = None
+    cover_url: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class UserUpdateIn(BaseModel):
+    cover_title_id: int | None = None
 
 
 class AuthOut(BaseModel):

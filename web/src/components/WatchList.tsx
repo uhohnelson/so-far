@@ -1,8 +1,125 @@
-import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
-import type { LibraryItem } from '../types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  episodeName as cachedEpisodeName,
+  getCachedSeason,
+  loadSeasonEpisodes,
+} from '../seasonCache'
+import type { Episode, LibraryItem, MediaType } from '../types'
+import { WatchListSkeleton } from './Skeletons'
+
+function thumbUrl(url: string | null): string | null {
+  if (!url) return null
+  return url.replace('/w500/', '/w185/')
+}
+
+function daysUntil(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const d = new Date(`${dateStr.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const diff = Math.ceil((d.getTime() - today.getTime()) / 86_400_000)
+  return diff > 0 ? diff : null
+}
+
+type UpcomingRow = {
+  key: string
+  item: LibraryItem
+  days: number
+  date: string
+  kind: 'movie' | 'episode'
+  season?: number
+  episode?: number
+  episodeName?: string | null
+  badge?: string | null
+}
+
+function movieUpcoming(item: LibraryItem): UpcomingRow | null {
+  if (item.title.media_type !== 'movie') return null
+  const date = item.title.release_date
+  const days = daysUntil(date)
+  if (!date || days == null) return null
+  return {
+    key: `movie-${item.id}`,
+    item,
+    days,
+    date,
+    kind: 'movie',
+    episodeName: item.title.title,
+    badge: null,
+  }
+}
+
+function findUpcomingInSeason(
+  episodes: Episode[],
+  fromEpisode: number,
+): Episode | null {
+  const sorted = [...episodes].sort((a, b) => a.episode - b.episode)
+  for (const ep of sorted) {
+    if (ep.episode < fromEpisode) continue
+    if (daysUntil(ep.air_date) != null) return ep
+  }
+  return null
+}
+
+function episodeBadge(ep: Episode, seasons: LibraryItem['title']['seasons']): string | null {
+  if (ep.episode !== 1) return null
+  const numbered = (seasons ?? [])
+    .filter((s) => s.season_number >= 1)
+    .sort((a, b) => a.season_number - b.season_number)
+  if (numbered.length && numbered[0].season_number === ep.season) return 'Premiere'
+  return 'Mid-season'
+}
+
+async function resolveTvUpcoming(item: LibraryItem): Promise<UpcomingRow | null> {
+  if (item.title.media_type !== 'tv') return null
+  const seasons = (item.title.seasons ?? [])
+    .filter((s) => s.season_number >= 1)
+    .sort((a, b) => a.season_number - b.season_number)
+  if (!seasons.length) return null
+
+  let season = item.current_season && item.current_season >= 1
+    ? item.current_season
+    : seasons[0].season_number
+  let fromEp = item.current_episode && item.current_episode >= 1
+    ? item.current_episode
+    : 1
+
+  // Prefer season air dates as a cheap filter before fetching episodes.
+  for (let i = 0; i < seasons.length; i++) {
+    const s = seasons[i]
+    if (s.season_number < season) continue
+    const startEp = s.season_number === season ? fromEp : 1
+    let episodes = getCachedSeason(item.title.tmdb_id, s.season_number)
+    if (!episodes) {
+      try {
+        episodes = await loadSeasonEpisodes(item.title.tmdb_id, s.season_number)
+      } catch {
+        continue
+      }
+    }
+    const hit = findUpcomingInSeason(episodes, startEp)
+    if (hit) {
+      const days = daysUntil(hit.air_date)
+      if (days == null || !hit.air_date) continue
+      return {
+        key: `tv-${item.id}-${hit.season}-${hit.episode}`,
+        item,
+        days,
+        date: hit.air_date,
+        kind: 'episode',
+        season: hit.season,
+        episode: hit.episode,
+        episodeName: hit.name,
+        badge: episodeBadge(hit, item.title.seasons),
+      }
+    }
+  }
+  return null
+}
 
 interface WatchListProps {
+  mediaType: MediaType
   items: LibraryItem[] | null
   onOpen: (item: LibraryItem) => void
   onMark: (item: LibraryItem) => void
@@ -131,6 +248,7 @@ function SwipeToMark({
 }
 
 export default function WatchList({
+  mediaType,
   items,
   onOpen,
   onMark,
@@ -140,45 +258,135 @@ export default function WatchList({
   const [sub, setSub] = useState<SubTab>('watch')
   const [grid, setGrid] = useState(false)
   const [epNames, setEpNames] = useState<Record<string, string>>({})
-  const fetching = useRef<Set<string>>(new Set())
+  const [upcoming, setUpcoming] = useState<UpcomingRow[] | null>(null)
 
-  const watching = (items ?? []).filter((i) => i.status === 'watching')
+  const scoped = useMemo(
+    () => (items ?? []).filter((i) => i.title.media_type === mediaType),
+    [items, mediaType],
+  )
+
+  const watching = scoped.filter((i) => {
+    if (i.status === 'watching') return true
+    // Movies on "want" that are already out live on the watch list.
+    if (
+      mediaType === 'movie' &&
+      i.status === 'want' &&
+      daysUntil(i.title.release_date) == null
+    ) {
+      return true
+    }
+    return false
+  })
+
+  const candidates = useMemo(
+    () => scoped.filter((i) => i.status === 'want' || i.status === 'watching'),
+    [scoped],
+  )
 
   useEffect(() => {
-    for (const item of watching) {
-      if (
-        item.title.media_type !== 'tv' ||
-        !item.current_season ||
-        !item.current_episode
+    let cancelled = false
+    const needed = watching.filter(
+      (item) =>
+        item.title.media_type === 'tv' &&
+        item.current_season &&
+        item.current_episode,
+    )
+
+    // Paint anything already in the shared season cache immediately.
+    const seeded: Record<string, string> = {}
+    for (const item of needed) {
+      const name = cachedEpisodeName(
+        item.title.tmdb_id,
+        item.current_season!,
+        item.current_episode!,
       )
-        continue
-      const key = `${item.title.tmdb_id}:${item.current_season}:${item.current_episode}`
-      if (epNames[key] !== undefined || fetching.current.has(key)) continue
-      fetching.current.add(key)
-      api
-        .seasonEpisodes(item.title.tmdb_id, item.current_season)
-        .then((res) => {
-          const ep = res.episodes.find(
-            (e) => e.episode === item.current_episode,
+      if (name !== undefined) {
+        seeded[
+          `${item.title.tmdb_id}:${item.current_season}:${item.current_episode}`
+        ] = name
+      }
+    }
+    if (Object.keys(seeded).length) {
+      setEpNames((prev) => ({ ...prev, ...seeded }))
+    }
+
+    ;(async () => {
+      const seasons = new Map<string, { tmdbId: number; season: number }>()
+      for (const item of needed) {
+        const k = `${item.title.tmdb_id}:${item.current_season}`
+        seasons.set(k, {
+          tmdbId: item.title.tmdb_id,
+          season: item.current_season!,
+        })
+      }
+      await Promise.all(
+        [...seasons.values()].map(async ({ tmdbId, season }) => {
+          try {
+            await loadSeasonEpisodes(tmdbId, season)
+          } catch {
+            // leave names blank
+          }
+        }),
+      )
+      if (cancelled) return
+      setEpNames((prev) => {
+        const next = { ...prev }
+        for (const item of needed) {
+          const key = `${item.title.tmdb_id}:${item.current_season}:${item.current_episode}`
+          const name = cachedEpisodeName(
+            item.title.tmdb_id,
+            item.current_season!,
+            item.current_episode!,
           )
-          setEpNames((prev) => ({ ...prev, [key]: ep?.name || '' }))
-        })
-        .catch(() => {
-          setEpNames((prev) => ({ ...prev, [key]: '' }))
-        })
+          next[key] = name ?? ''
+        }
+        return next
+      })
+    })()
+
+    return () => {
+      cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items])
 
-  if (items === null) return <div className="spinner" />
+  useEffect(() => {
+    if (sub !== 'want' || !items) {
+      return
+    }
+    let cancelled = false
+    setUpcoming(null)
+    ;(async () => {
+      const rows: UpcomingRow[] = []
+      await Promise.all(
+        candidates.map(async (item) => {
+          if (item.title.media_type === 'movie') {
+            const row = movieUpcoming(item)
+            if (row) rows.push(row)
+            return
+          }
+          const row = await resolveTvUpcoming(item)
+          if (row) rows.push(row)
+        }),
+      )
+      if (cancelled) return
+      rows.sort((a, b) => a.days - b.days || a.date.localeCompare(b.date))
+      setUpcoming(rows)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [sub, items, candidates])
 
-  const want = items.filter((i) => i.status === 'want')
+  if (items === null) return <WatchListSkeleton />
+
   const firstWatching = watching[0]
 
   const nextEpName = (item: LibraryItem): string | null => {
     if (!item.current_season || !item.current_episode) return null
     const key = `${item.title.tmdb_id}:${item.current_season}:${item.current_episode}`
-    return epNames[key] || null
+    const name = epNames[key]
+    return name || null
   }
 
   return (
@@ -194,7 +402,7 @@ export default function WatchList({
           className={sub === 'want' ? 'active' : ''}
           onClick={() => setSub('want')}
         >
-          List
+          Upcoming
         </button>
         {sub === 'watch' && watching.length > 0 && (
           <button
@@ -232,11 +440,11 @@ export default function WatchList({
 
         {sub === 'watch' && watching.length === 0 && (
           <div className="empty">
-            <div className="big">📺</div>
-            Nothing in Watching yet.
+            <div className="big">{mediaType === 'tv' ? '📺' : '🎬'}</div>
+            Nothing in your {mediaType === 'tv' ? 'show' : 'movie'} watch list yet.
             <br />
             <button className="primary-btn" onClick={onGoDiscover}>
-              Discover shows
+              Discover {mediaType === 'tv' ? 'shows' : 'movies'}
             </button>
           </div>
         )}
@@ -249,8 +457,12 @@ export default function WatchList({
                 className="grid-card"
                 onClick={() => onOpen(item)}
               >
-                {item.title.poster_url ? (
-                  <img src={item.title.poster_url} alt={item.title.title} />
+                {thumbUrl(item.title.poster_url) ? (
+                  <img
+                    src={thumbUrl(item.title.poster_url)!}
+                    alt={item.title.title}
+                    loading="lazy"
+                  />
                 ) : (
                   <div className="grid-ph">{item.title.title}</div>
                 )}
@@ -285,11 +497,12 @@ export default function WatchList({
                     className="ep-main"
                     onClick={() => onOpen(item)}
                   >
-                    {item.title.poster_url ? (
+                    {thumbUrl(item.title.poster_url) ? (
                       <img
                         className="thumb"
-                        src={item.title.poster_url}
+                        src={thumbUrl(item.title.poster_url)!}
                         alt=""
+                        loading="lazy"
                       />
                     ) : (
                       <div className="thumb ph">🎬</div>
@@ -343,36 +556,83 @@ export default function WatchList({
           </div>
         )}
 
-        {sub === 'want' && want.length === 0 && (
-          <div className="empty">
-            <div className="big">✨</div>
-            Your list is empty.
+        {sub === 'want' && upcoming === null && (
+          <div className="ep-list" aria-busy="true" aria-label="Loading upcoming">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div className="skel-ep-card" key={i}>
+                <div className="skel skel-thumb" />
+                <div className="skel-ep-lines">
+                  <div className="skel skel-line w60" />
+                  <div className="skel skel-line w40" />
+                  <div className="skel skel-line w80" />
+                </div>
+                <div className="skel skel-check" />
+              </div>
+            ))}
           </div>
         )}
 
-        {sub === 'want' && want.length > 0 && (
+        {sub === 'want' && upcoming && upcoming.length === 0 && (
+          <div className="empty">
+            <div className="big">📅</div>
+            Nothing upcoming yet.
+            <br />
+            Add {mediaType === 'tv' ? 'shows' : 'unreleased movies'} to see countdowns here.
+          </div>
+        )}
+
+        {sub === 'want' && upcoming && upcoming.length > 0 && (
           <div className="ep-list">
-            {want.map((item) => (
+            {upcoming.map((row) => (
               <button
-                key={item.id}
-                className="want-card"
-                onClick={() => onOpen(item)}
+                key={row.key}
+                type="button"
+                className="upcoming-card"
+                onClick={() => onOpen(row.item)}
               >
-                {item.title.poster_url ? (
-                  <img className="thumb" src={item.title.poster_url} alt="" />
+                {thumbUrl(row.item.title.poster_url) ? (
+                  <img
+                    className="thumb"
+                    src={thumbUrl(row.item.title.poster_url)!}
+                    alt=""
+                    loading="lazy"
+                  />
                 ) : (
                   <div className="thumb ph">🎬</div>
                 )}
-                <div>
-                  <div className="name">{item.title.title}</div>
-                  <div className="meta">
-                    {[
-                      item.title.year,
-                      item.title.media_type === 'tv' ? 'Show' : 'Movie',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </div>
+                <div className="body">
+                  <span className="show-chip">
+                    {row.item.title.title}
+                    <span className="chev">›</span>
+                  </span>
+                  {row.kind === 'episode' && row.season != null && row.episode != null ? (
+                    <>
+                      <div className="ep-code">
+                        S{String(row.season).padStart(2, '0')} | E
+                        {String(row.episode).padStart(2, '0')}
+                        {row.badge && (
+                          <span className="upcoming-badge">{row.badge}</span>
+                        )}
+                      </div>
+                      <div className="ep-title">
+                        {row.episodeName || 'Episode'}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="ep-code">
+                        Movie
+                        <span className="upcoming-badge">Release</span>
+                      </div>
+                      <div className="ep-title">
+                        {row.date.slice(0, 10)}
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="upcoming-days" aria-label={`${row.days} days`}>
+                  <strong>{row.days}</strong>
+                  <span>{row.days === 1 ? 'day' : 'days'}</span>
                 </div>
               </button>
             ))}
