@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# Install Sofar as a systemd service (no Docker).
+# Install Sofar as systemd services (no Docker).
 # Run from the repo root on the VPS:  bash deploy/setup.sh
+#
+#   bash deploy/setup.sh            bot + web app
+#   bash deploy/setup.sh --bot-only just the Telegram bot
 set -euo pipefail
 
 APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$USER}"
-SERVICE_NAME="sofar-bot"
+WITH_WEB=1
+[ "${1:-}" = "--bot-only" ] && WITH_WEB=0
+
+install_unit() {
+  local name="$1"
+  sed -e "s|__USER__|$RUN_USER|g" -e "s|__APPDIR__|$APPDIR|g" \
+    "$APPDIR/deploy/$name.service" | sudo tee "/etc/systemd/system/$name.service" >/dev/null
+}
 
 echo "==> Installing system packages"
 sudo apt-get update -qq
@@ -33,15 +43,28 @@ if [ ! -f "$APPDIR/.env" ]; then
 fi
 chmod 600 "$APPDIR/.env"
 
-echo "==> Installing systemd unit"
-sed -e "s|__USER__|$RUN_USER|g" -e "s|__APPDIR__|$APPDIR|g" \
-  "$APPDIR/deploy/$SERVICE_NAME.service" | sudo tee "/etc/systemd/system/$SERVICE_NAME.service" >/dev/null
+if [ "$WITH_WEB" = "1" ]; then
+  if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -c2- | cut -d. -f1)" -lt 20 ]; then
+    echo "==> Installing Node 22 (needed to build the web app)"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+  fi
+  echo "==> Building web app"
+  (cd "$APPDIR/web" && npm ci && npm run build)
+fi
+
+echo "==> Installing systemd units"
+install_unit sofar-bot
+[ "$WITH_WEB" = "1" ] && install_unit sofar-web
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now "$SERVICE_NAME"
+sudo systemctl enable --now sofar-bot
+[ "$WITH_WEB" = "1" ] && sudo systemctl enable --now sofar-web
 
-echo "==> Done. Status:"
-sudo systemctl --no-pager status "$SERVICE_NAME" || true
+echo "==> Done."
+sudo systemctl --no-pager --lines=0 status sofar-bot || true
+[ "$WITH_WEB" = "1" ] && { sudo systemctl --no-pager --lines=0 status sofar-web || true; }
 echo
-echo "Logs:    journalctl -u $SERVICE_NAME -f"
-echo "Restart: sudo systemctl restart $SERVICE_NAME"
+echo "Bot logs: journalctl -u sofar-bot -f"
+[ "$WITH_WEB" = "1" ] && echo "Web logs: journalctl -u sofar-web -f"
+[ "$WITH_WEB" = "1" ] && echo "Web app is on 127.0.0.1:8000 - put Caddy or nginx in front for HTTPS."

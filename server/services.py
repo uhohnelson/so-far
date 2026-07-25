@@ -1,12 +1,78 @@
 from __future__ import annotations
 
 import json
+import secrets
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 
-from server.models import MediaType, Title, User, UserTitle, WatchStatus
+from server.models import (
+    ApiToken,
+    LoginCode,
+    MediaType,
+    Title,
+    User,
+    UserTitle,
+    WatchEvent,
+    WatchStatus,
+)
 from server.tmdb import TmdbClient
+
+LOGIN_CODE_TTL = timedelta(minutes=10)
+# No confusable characters (0/O, 1/I/L).
+_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def create_login_code(db: Session, user: User) -> LoginCode:
+    """Issue a fresh 6-char login code, replacing any older ones for this user."""
+    db.execute(delete(LoginCode).where(LoginCode.user_id == user.id))
+    code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(6))
+    row = LoginCode(user_id=user.id, code=code, expires_at=_utcnow() + LOGIN_CODE_TTL)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def exchange_login_code(db: Session, code: str) -> ApiToken | None:
+    """Trade a valid login code for a long-lived API token. Consumes the code."""
+    row = db.scalar(select(LoginCode).where(LoginCode.code == code.strip().upper()))
+    if not row:
+        return None
+    expires = row.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires < _utcnow():
+        db.delete(row)
+        db.commit()
+        return None
+    token = ApiToken(user_id=row.user_id, token=secrets.token_urlsafe(32))
+    db.add(token)
+    db.delete(row)
+    db.commit()
+    db.refresh(token)
+    return token
+
+
+def get_user_by_token(db: Session, token: str) -> User | None:
+    row = db.scalar(
+        select(ApiToken).options(joinedload(ApiToken.user)).where(ApiToken.token == token)
+    )
+    if not row:
+        return None
+    row.last_used_at = _utcnow()
+    db.commit()
+    return row.user
+
+
+def revoke_token(db: Session, token: str) -> None:
+    db.execute(delete(ApiToken).where(ApiToken.token == token))
+    db.commit()
 
 
 def get_or_create_user(
@@ -34,7 +100,42 @@ def upsert_title_from_tmdb(
     title = db.scalar(
         select(Title).where(Title.tmdb_id == tmdb_id, Title.media_type == mt)
     )
-    cached = json.dumps({"seasons": detail.seasons} if detail.seasons else {})
+    seasons_payload = [
+        {
+            "season_number": s.season_number,
+            "episode_count": s.episode_count,
+            "name": s.name,
+            "poster_path": s.poster_path,
+            "air_date": s.air_date,
+        }
+        for s in detail.seasons
+    ]
+    cached = json.dumps(
+        {
+            "seasons": seasons_payload,
+            "backdrop_path": detail.backdrop_path,
+            "genres": detail.genres,
+            "tagline": detail.tagline,
+            "runtime": detail.runtime,
+            "status": detail.status,
+            "vote_average": detail.vote_average,
+            "networks": detail.networks,
+            "number_of_seasons": detail.number_of_seasons,
+            "number_of_episodes": detail.number_of_episodes,
+            "release_date": detail.release_date,
+            "trailer_key": detail.trailer_key,
+            "providers": detail.providers,
+            "cast": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "character": c.character,
+                    "profile_path": c.profile_path,
+                }
+                for c in detail.cast
+            ],
+        }
+    )
     if title:
         title.title = detail.title
         title.year = detail.year
@@ -125,6 +226,11 @@ def remove_from_library(db: Session, user: User, user_title_id: int) -> bool:
     row = get_library_row(db, user, user_title_id)
     if not row:
         return False
+    db.execute(
+        delete(WatchEvent).where(
+            WatchEvent.user_id == user.id, WatchEvent.title_id == row.title_id
+        )
+    )
     db.delete(row)
     db.commit()
     return True
@@ -144,22 +250,143 @@ def set_progress(
     return row
 
 
-def mark_episode_watched(
-    db: Session, tmdb: TmdbClient, user: User, user_title_id: int
-) -> tuple[UserTitle | None, str]:
-    """Mark current episode done and advance. Returns (row, message)."""
+def list_watched_episodes(
+    db: Session, user: User, title_id: int
+) -> set[tuple[int, int]]:
+    rows = db.scalars(
+        select(WatchEvent).where(
+            WatchEvent.user_id == user.id, WatchEvent.title_id == title_id
+        )
+    ).all()
+    return {(r.season, r.episode) for r in rows}
+
+
+def get_stats(db: Session, user: User) -> dict:
+    """Totals for the profile page: counts and estimated minutes watched."""
+    events = db.scalars(
+        select(WatchEvent).where(WatchEvent.user_id == user.id)
+    ).all()
+    if not events:
+        return {"episodes": 0, "movies": 0, "minutes": 0}
+
+    title_ids = {e.title_id for e in events}
+    titles = db.scalars(select(Title).where(Title.id.in_(title_ids))).all()
+    runtime_by_title: dict[int, int | None] = {}
+    for t in titles:
+        runtime = None
+        if t.cached_metadata:
+            try:
+                runtime = json.loads(t.cached_metadata).get("runtime")
+            except json.JSONDecodeError:
+                runtime = None
+        runtime_by_title[t.id] = runtime
+
+    episodes = movies = minutes = 0
+    for e in events:
+        runtime = runtime_by_title.get(e.title_id)
+        if e.season == 0 and e.episode == 0:
+            movies += 1
+            minutes += runtime or 110
+        else:
+            episodes += 1
+            minutes += runtime or 45
+    return {"episodes": episodes, "movies": movies, "minutes": minutes}
+
+
+def _ensure_watch_event(
+    db: Session, user_id: int, title_id: int, season: int, episode: int
+) -> None:
+    existing = db.scalar(
+        select(WatchEvent).where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.title_id == title_id,
+            WatchEvent.season == season,
+            WatchEvent.episode == episode,
+        )
+    )
+    if not existing:
+        db.add(
+            WatchEvent(
+                user_id=user_id, title_id=title_id, season=season, episode=episode
+            )
+        )
+
+
+def _remove_watch_event(
+    db: Session, user_id: int, title_id: int, season: int, episode: int
+) -> None:
+    db.execute(
+        delete(WatchEvent).where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.title_id == title_id,
+            WatchEvent.season == season,
+            WatchEvent.episode == episode,
+        )
+    )
+
+
+def _season_map(title: Title) -> dict[int, int]:
+    """season_number -> episode_count from cached metadata."""
+    if not title.cached_metadata:
+        return {}
+    try:
+        seasons = json.loads(title.cached_metadata).get("seasons") or []
+    except json.JSONDecodeError:
+        return {}
+    out: dict[int, int] = {}
+    for s in seasons:
+        sn = s.get("season_number")
+        if sn is None:
+            continue
+        out[int(sn)] = int(s.get("episode_count") or 0)
+    return out
+
+
+def previous_episodes(
+    title: Title, season: int, episode: int
+) -> list[tuple[int, int]]:
+    """All episodes before (season, episode), in order."""
+    counts = _season_map(title)
+    if not counts:
+        return [(season, e) for e in range(1, episode)]
+    prev: list[tuple[int, int]] = []
+    for sn in sorted(counts):
+        if sn > season:
+            break
+        last = episode - 1 if sn == season else counts[sn]
+        for e in range(1, last + 1):
+            prev.append((sn, e))
+    return prev
+
+
+def mark_specific_episode(
+    db: Session,
+    tmdb: TmdbClient,
+    user: User,
+    user_title_id: int,
+    season: int,
+    episode: int,
+    mark_previous: bool = False,
+) -> tuple[UserTitle | None, str, int]:
+    """
+    Mark one episode watched. If mark_previous, also mark every earlier episode.
+    Returns (row, message, previous_marked_count).
+    """
     row = get_library_row(db, user, user_title_id)
     if not row:
-        return None, "Title not found in your list."
-    if row.title.media_type == MediaType.movie:
-        row.status = WatchStatus.watched
-        db.commit()
-        db.refresh(row)
-        return row, f"Marked {row.title.title} as watched."
+        return None, "Title not found in your list.", 0
+    if row.title.media_type != MediaType.tv:
+        return None, "Only TV shows have episodes.", 0
 
-    season = row.current_season or 1
-    episode = row.current_episode or 1
-    marked = f"S{season}E{episode}"
+    previous_count = 0
+    if mark_previous:
+        watched = list_watched_episodes(db, user, row.title_id)
+        for s, e in previous_episodes(row.title, season, episode):
+            if (s, e) not in watched:
+                _ensure_watch_event(db, user.id, row.title_id, s, e)
+                previous_count += 1
+
+    _ensure_watch_event(db, user.id, row.title_id, season, episode)
 
     seasons = None
     if row.title.cached_metadata:
@@ -169,21 +396,138 @@ def mark_episode_watched(
             seasons = None
 
     nxt = tmdb.next_episode(row.title.tmdb_id, season, episode, seasons)
+    row.status = WatchStatus.watching
     if nxt:
-        ep_name = f" - {nxt.name}" if nxt.name else ""
         row.current_season = nxt.season
         row.current_episode = nxt.episode
-        row.status = WatchStatus.watching
-        db.commit()
-        db.refresh(row)
-        return (
-            row,
-            f"Marked {marked}. Next up: S{nxt.season}E{nxt.episode}{ep_name}",
-        )
+        msg = f"Marked S{season}E{episode}. Next up: S{nxt.season}E{nxt.episode}"
+    else:
+        row.status = WatchStatus.watched
+        row.current_season = None
+        row.current_episode = None
+        msg = f"Marked S{season}E{episode}. Show finished."
 
+    db.commit()
+    db.refresh(row)
+    return row, msg, previous_count
+
+
+def unmark_specific_episode(
+    db: Session, user: User, user_title_id: int, season: int, episode: int
+) -> UserTitle | None:
+    row = get_library_row(db, user, user_title_id)
+    if not row or row.title.media_type != MediaType.tv:
+        return None
+    _remove_watch_event(db, user.id, row.title_id, season, episode)
+    row.status = WatchStatus.watching
+    row.current_season = season
+    row.current_episode = episode
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def mark_season(
+    db: Session,
+    tmdb: TmdbClient,
+    user: User,
+    user_title_id: int,
+    season: int,
+) -> tuple[UserTitle | None, str]:
+    """Mark every episode in a season as watched."""
+    row = get_library_row(db, user, user_title_id)
+    if not row:
+        return None, "Title not found in your list."
+    if row.title.media_type != MediaType.tv:
+        return None, "Only TV shows have seasons."
+
+    counts = _season_map(row.title)
+    total = counts.get(season)
+    if not total:
+        return None, f"No episodes found for season {season}."
+
+    for e in range(1, total + 1):
+        _ensure_watch_event(db, user.id, row.title_id, season, e)
+
+    seasons = None
+    if row.title.cached_metadata:
+        try:
+            seasons = json.loads(row.title.cached_metadata).get("seasons")
+        except json.JSONDecodeError:
+            seasons = None
+
+    nxt = tmdb.next_episode(row.title.tmdb_id, season, total, seasons)
+    row.status = WatchStatus.watching
+    if nxt:
+        row.current_season = nxt.season
+        row.current_episode = nxt.episode
+        msg = f"Marked season {season} complete."
+    else:
+        row.status = WatchStatus.watched
+        row.current_season = None
+        row.current_episode = None
+        msg = f"Marked season {season} complete. Show finished."
+
+    db.commit()
+    db.refresh(row)
+    return row, msg
+
+
+def unmark_season(
+    db: Session, user: User, user_title_id: int, season: int
+) -> UserTitle | None:
+    row = get_library_row(db, user, user_title_id)
+    if not row or row.title.media_type != MediaType.tv:
+        return None
+    counts = _season_map(row.title)
+    total = counts.get(season, 0)
+    for e in range(1, total + 1):
+        _remove_watch_event(db, user.id, row.title_id, season, e)
+    row.status = WatchStatus.watching
+    row.current_season = season
+    row.current_episode = 1
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def mark_all_episodes(
+    db: Session, user: User, user_title_id: int
+) -> tuple[UserTitle | None, str]:
+    row = get_library_row(db, user, user_title_id)
+    if not row:
+        return None, "Title not found in your list."
+    if row.title.media_type != MediaType.tv:
+        return None, "Only TV shows have episodes."
+    counts = _season_map(row.title)
+    for season, total in counts.items():
+        for e in range(1, total + 1):
+            _ensure_watch_event(db, user.id, row.title_id, season, e)
     row.status = WatchStatus.watched
     row.current_season = None
     row.current_episode = None
     db.commit()
     db.refresh(row)
-    return row, f"Marked {marked}. That was the last known episode - show marked watched."
+    return row, f"Marked all episodes of {row.title.title}."
+
+
+def mark_episode_watched(
+    db: Session, tmdb: TmdbClient, user: User, user_title_id: int
+) -> tuple[UserTitle | None, str]:
+    """Mark current episode done and advance. Returns (row, message)."""
+    row = get_library_row(db, user, user_title_id)
+    if not row:
+        return None, "Title not found in your list."
+    if row.title.media_type == MediaType.movie:
+        _ensure_watch_event(db, user.id, row.title_id, 0, 0)
+        row.status = WatchStatus.watched
+        db.commit()
+        db.refresh(row)
+        return row, f"Marked {row.title.title} as watched."
+
+    season = row.current_season or 1
+    episode = row.current_episode or 1
+    updated, message, _ = mark_specific_episode(
+        db, tmdb, user, user_title_id, season, episode, mark_previous=False
+    )
+    return updated, message

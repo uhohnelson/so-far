@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -15,6 +15,37 @@ class SearchResult:
     year: int | None
     overview: str | None
     poster_path: str | None
+    backdrop_path: str | None = None
+
+
+@dataclass
+class CastMember:
+    id: int
+    name: str
+    character: str | None
+    profile_path: str | None
+    order: int = 0
+
+
+@dataclass
+class SeasonSummary:
+    season_number: int
+    episode_count: int | None
+    name: str | None
+    poster_path: str | None = None
+    air_date: str | None = None
+    overview: str | None = None
+
+
+@dataclass
+class EpisodeInfo:
+    season: int
+    episode: int
+    name: str | None
+    air_date: str | None
+    overview: str | None = None
+    still_path: str | None = None
+    runtime: int | None = None
 
 
 @dataclass
@@ -25,15 +56,21 @@ class TitleDetail:
     year: int | None
     overview: str | None
     poster_path: str | None
-    seasons: list[dict] | None = None
-
-
-@dataclass
-class EpisodeInfo:
-    season: int
-    episode: int
-    name: str | None
-    air_date: str | None
+    backdrop_path: str | None = None
+    tagline: str | None = None
+    genres: list[str] = field(default_factory=list)
+    runtime: int | None = None  # movie minutes, or typical episode minutes for TV
+    status: str | None = None
+    vote_average: float | None = None
+    vote_count: int | None = None
+    networks: list[str] = field(default_factory=list)
+    number_of_seasons: int | None = None
+    number_of_episodes: int | None = None
+    seasons: list[SeasonSummary] = field(default_factory=list)
+    cast: list[CastMember] = field(default_factory=list)
+    release_date: str | None = None
+    trailer_key: str | None = None  # YouTube video key
+    providers: list[dict] = field(default_factory=list)  # {name, logo_path}
 
 
 class TmdbClient:
@@ -66,6 +103,7 @@ class TmdbClient:
             year=year,
             overview=overview,
             poster_path=item.get("poster_path"),
+            backdrop_path=item.get("backdrop_path"),
         )
 
     def search(
@@ -104,25 +142,100 @@ class TmdbClient:
                 break
         return results
 
+    def top_rated(self, media_type: str, limit: int = 8) -> list[SearchResult]:
+        if media_type not in {"movie", "tv"}:
+            raise ValueError("media_type must be movie or tv")
+        data = self._get(f"/{media_type}/top_rated")
+        results: list[SearchResult] = []
+        for item in data.get("results", []):
+            item["media_type"] = media_type
+            parsed = self._parse_result(item)
+            if parsed:
+                results.append(parsed)
+            if len(results) >= limit:
+                break
+        return results
+
+    def _parse_cast(self, credits: dict | None, limit: int = 16) -> list[CastMember]:
+        if not credits:
+            return []
+        cast: list[CastMember] = []
+        for c in credits.get("cast", [])[:limit]:
+            cast.append(
+                CastMember(
+                    id=c["id"],
+                    name=c.get("name") or "Unknown",
+                    character=c.get("character") or None,
+                    profile_path=c.get("profile_path"),
+                    order=c.get("order", 0),
+                )
+            )
+        return cast
+
+    def _parse_trailer(self, data: dict) -> str | None:
+        best = None
+        for v in (data.get("videos") or {}).get("results", []):
+            if v.get("site") != "YouTube" or not v.get("key"):
+                continue
+            if v.get("type") == "Trailer":
+                return v["key"]
+            if best is None and v.get("type") == "Teaser":
+                best = v["key"]
+        return best
+
+    def _parse_providers(self, data: dict, region: str = "US") -> list[dict]:
+        results = (data.get("watch/providers") or {}).get("results") or {}
+        regional = results.get(region) or {}
+        providers: list[dict] = []
+        seen: set[str] = set()
+        for group in ("flatrate", "free", "ads"):
+            for p in regional.get(group) or []:
+                name = p.get("provider_name")
+                if name and name not in seen:
+                    seen.add(name)
+                    providers.append({"name": name, "logo_path": p.get("logo_path")})
+        return providers[:8]
+
     def get_title(self, media_type: str, tmdb_id: int) -> TitleDetail:
-        data = self._get(f"/{media_type}/{tmdb_id}")
+        data = self._get(
+            f"/{media_type}/{tmdb_id}",
+            {"append_to_response": "credits,videos,watch/providers"},
+        )
         title = data.get("title") or data.get("name") or "Untitled"
         date = data.get("release_date") or data.get("first_air_date") or ""
         year = int(date[:4]) if len(date) >= 4 and date[:4].isdigit() else None
         overview = data.get("overview") or None
-        if overview and len(overview) > 500:
-            overview = overview[:497] + "..."
-        seasons = None
-        if media_type == "tv":
-            seasons = [
-                {
-                    "season_number": s.get("season_number"),
-                    "episode_count": s.get("episode_count"),
-                    "name": s.get("name"),
-                }
-                for s in data.get("seasons", [])
-                if s.get("season_number", 0) > 0
-            ]
+        genres = [g.get("name") for g in data.get("genres", []) if g.get("name")]
+        cast = self._parse_cast(data.get("credits"))
+
+        seasons: list[SeasonSummary] = []
+        runtime = None
+        networks: list[str] = []
+        number_of_seasons = None
+        number_of_episodes = None
+
+        if media_type == "movie":
+            runtime = data.get("runtime") or None
+        else:
+            runtimes = data.get("episode_run_time") or []
+            runtime = runtimes[0] if runtimes else None
+            networks = [n.get("name") for n in data.get("networks", []) if n.get("name")]
+            number_of_seasons = data.get("number_of_seasons")
+            number_of_episodes = data.get("number_of_episodes")
+            for s in data.get("seasons", []):
+                sn = s.get("season_number", 0)
+                if sn and sn > 0:
+                    seasons.append(
+                        SeasonSummary(
+                            season_number=sn,
+                            episode_count=s.get("episode_count"),
+                            name=s.get("name"),
+                            poster_path=s.get("poster_path"),
+                            air_date=s.get("air_date"),
+                            overview=s.get("overview") or None,
+                        )
+                    )
+
         return TitleDetail(
             tmdb_id=tmdb_id,
             media_type=media_type,
@@ -130,8 +243,44 @@ class TmdbClient:
             year=year,
             overview=overview,
             poster_path=data.get("poster_path"),
+            backdrop_path=data.get("backdrop_path"),
+            tagline=data.get("tagline") or None,
+            genres=genres,
+            runtime=runtime,
+            status=data.get("status"),
+            vote_average=data.get("vote_average"),
+            vote_count=data.get("vote_count"),
+            networks=networks,
+            number_of_seasons=number_of_seasons,
+            number_of_episodes=number_of_episodes,
             seasons=seasons,
+            cast=cast,
+            release_date=date or None,
+            trailer_key=self._parse_trailer(data),
+            providers=self._parse_providers(data),
         )
+
+    def get_season_episodes(self, tmdb_id: int, season: int) -> list[EpisodeInfo]:
+        try:
+            data = self._get(f"/tv/{tmdb_id}/season/{season}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return []
+            raise
+        episodes: list[EpisodeInfo] = []
+        for ep in data.get("episodes", []):
+            episodes.append(
+                EpisodeInfo(
+                    season=season,
+                    episode=ep.get("episode_number") or 0,
+                    name=ep.get("name"),
+                    air_date=ep.get("air_date"),
+                    overview=ep.get("overview") or None,
+                    still_path=ep.get("still_path"),
+                    runtime=ep.get("runtime"),
+                )
+            )
+        return [e for e in episodes if e.episode > 0]
 
     def get_episode(self, tmdb_id: int, season: int, episode: int) -> EpisodeInfo | None:
         try:
@@ -145,19 +294,23 @@ class TmdbClient:
             episode=episode,
             name=data.get("name"),
             air_date=data.get("air_date"),
+            overview=data.get("overview") or None,
+            still_path=data.get("still_path"),
+            runtime=data.get("runtime"),
         )
 
     def next_episode(
         self, tmdb_id: int, season: int, episode: int, seasons: list[dict] | None = None
     ) -> EpisodeInfo | None:
-        # Try next episode in same season
         nxt = self.get_episode(tmdb_id, season, episode + 1)
         if nxt:
             return nxt
-        # Try first episode of next season
         if seasons is None:
             detail = self.get_title("tv", tmdb_id)
-            seasons = detail.seasons or []
+            seasons = [
+                {"season_number": s.season_number, "episode_count": s.episode_count}
+                for s in detail.seasons
+            ]
         season_numbers = sorted(
             s["season_number"] for s in seasons if s.get("season_number") is not None
         )

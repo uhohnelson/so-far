@@ -65,6 +65,38 @@ class Title(Base):
     library_rows: Mapped[list[UserTitle]] = relationship(back_populates="title")
 
 
+class LoginCode(Base):
+    """Short-lived code the bot hands out so the web app can log in."""
+
+    __tablename__ = "login_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship()
+
+
+class ApiToken(Base):
+    """Long-lived bearer token for the web app."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship()
+
+
 class UserTitle(Base):
     __tablename__ = "user_titles"
     __table_args__ = (UniqueConstraint("user_id", "title_id", name="uq_user_title"),)
@@ -87,3 +119,23 @@ class UserTitle(Base):
 
     user: Mapped[User] = relationship(back_populates="library")
     title: Mapped[Title] = relationship(back_populates="library_rows")
+
+
+class WatchEvent(Base):
+    """Per-episode (or movie) watch record."""
+
+    __tablename__ = "watch_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "title_id", "season", "episode", name="uq_watch_event"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title_id: Mapped[int] = mapped_column(ForeignKey("titles.id", ondelete="CASCADE"), nullable=False)
+    season: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    episode: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    watched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

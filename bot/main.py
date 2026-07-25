@@ -44,6 +44,7 @@ BOT_COMMANDS = [
     BotCommand("list", "Your library"),
     BotCommand("next", "What's next"),
     BotCommand("watched", "Mark episode done"),
+    BotCommand("app", "Log in to the web app"),
     BotCommand("cancel", "Cancel current step"),
     BotCommand("help", "Quick tips"),
 ]
@@ -304,6 +305,31 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(
         text, reply_markup=_main_menu_keyboard(), parse_mode=ParseMode.HTML
+    )
+
+
+async def app_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hand out a short-lived login code for the web app."""
+    telegram_id, display_name = _user_meta(update)
+    db = SessionLocal()
+    try:
+        user = services.get_or_create_user(db, telegram_id, display_name)
+        code = services.create_login_code(db, user)
+    finally:
+        db.close()
+
+    settings = get_settings()
+    url_bit = (
+        f"\n\nOpen: {html.escape(settings.web_app_url)}"
+        if settings.web_app_url
+        else ""
+    )
+    await update.message.reply_text(
+        "<b>Web app login</b>\n"
+        f"Your code: <code>{code.code}</code>\n"
+        "Enter it on the Sofar web app within 10 minutes."
+        f"{url_bit}",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -995,6 +1021,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("next", next_cmd))
     app.add_handler(CommandHandler("watched", watched_cmd))
     app.add_handler(CommandHandler("remove", remove_cmd))
+    app.add_handler(CommandHandler("app", app_cmd))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^menu:"))
     app.add_handler(CallbackQueryHandler(on_list_filter, pattern=r"^list:"))

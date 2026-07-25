@@ -1,0 +1,22 @@
+[Unit]
+Description=Sofar web app and API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APPDIR__
+EnvironmentFile=__APPDIR__/.env
+ExecStart=__APPDIR__/.venv/bin/uvicorn server.api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+MemoryMax=350M
+MemoryHigh=250M
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

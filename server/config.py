@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     tmdb_api_key: str
     database_url: str = "sqlite:///./data/sofar.db"
     default_timezone: str = "America/New_York"
+    web_app_url: str = ""
     tmdb_base_url: str = "https://api.themoviedb.org/3"
     tmdb_image_base: str = "https://image.tmdb.org/t/p/w500"
 
