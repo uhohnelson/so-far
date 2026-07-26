@@ -18,11 +18,14 @@ MemoryHigh=250M
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+# ProtectHome=true hides /home and breaks ExecStart for apps under ~/ (systemd 249).
 PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# App lives under /home; allow the checkout (data/, optional .pyc) while
-# ProtectSystem=strict keeps the rest of the filesystem read-only.
 ReadWritePaths=__APPDIR__
 
 [Install]
