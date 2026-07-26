@@ -36,7 +36,16 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 
         <ol className="login-steps">
           <li>
-            Open your Sofar bot
+            <a
+              className="login-bot-link"
+              href="https://t.me/sofarwatch_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open your Sofar bot
+              {' '}
+              <span className="login-bot-handle">@sofarwatch_bot</span>
+            </a>
           </li>
           <li>
             Send <code>/app</code>

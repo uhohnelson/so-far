@@ -167,6 +167,26 @@ input {
   place-items: center;
 }
 
+.login-bot-link {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--yellow);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.login-bot-link:hover,
+.login-bot-link:focus-visible {
+  color: var(--yellow-ink);
+  background: rgba(255, 212, 0, 0.35);
+  outline: none;
+}
+
+.login-bot-handle {
+  font-weight: 800;
+}
+
 .login code {
   background: var(--soft);
   padding: 2px 7px;
