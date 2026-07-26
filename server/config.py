@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     web_app_url: str = ""
     tmdb_base_url: str = "https://api.themoviedb.org/3"
     tmdb_image_base: str = "https://image.tmdb.org/t/p/w500"
+    # When unset/false, FastAPI /docs /redoc /openapi.json are disabled.
+    sofar_debug: bool = False
 
 
 @lru_cache

@@ -13,7 +13,7 @@ How to reach and manage the Always Free VM that runs Sofar.
 | Swap | 1 GB (`/swapfile`) |
 | Disk | ~50 GB boot volume (~43 GB free at last check) |
 | Region | Germany Central (Frankfurt) |
-| Public IP | `141.144.228.144` |
+| Public IP | `<VPS_PUBLIC_IP>` |
 | OS | Ubuntu 22.04 |
 | SSH user | `ubuntu` |
 
@@ -29,23 +29,23 @@ ssh vps
 
 That uses:
 
-- Host: `141.144.228.144`
+- Host: `<VPS_PUBLIC_IP>`
 - User: `ubuntu`
-- Key: `~/Downloads/Code_and_Config/ssh-key-2026-07-21.key`
+- Key: `~/.ssh/<your-oracle-ssh-key>`
 
 If the alias is missing, add this to `~/.ssh/config`:
 
 ```text
 Host vps
-  HostName 141.144.228.144
+  HostName <VPS_PUBLIC_IP>
   User ubuntu
-  IdentityFile ~/Downloads/Code_and_Config/ssh-key-2026-07-21.key
+  IdentityFile ~/.ssh/<your-oracle-ssh-key>
 ```
 
 Then:
 
 ```bash
-chmod 400 ~/Downloads/Code_and_Config/ssh-key-2026-07-21.key
+chmod 400 ~/.ssh/<your-oracle-ssh-key>
 ssh vps
 ```
 
@@ -83,11 +83,11 @@ Leave the tunnel terminal open while you use Cockpit.
 
 ### Optional: public Cockpit URL
 
-Only if you want `https://141.144.228.144:9090` without a tunnel.
+Only if you want `https://<VPS_PUBLIC_IP>:9090` without a tunnel.
 
 1. Oracle Cloud Console → Networking → VCN → Security List (or NSG for the instance).
 2. Add **Ingress**: TCP **9090**, source = your home IP if possible (safer than `0.0.0.0/0`).
-3. Open `https://141.144.228.144:9090` and log in as `ubuntu`.
+3. Open `https://<VPS_PUBLIC_IP>:9090` and log in as `ubuntu`.
 
 Prefer the tunnel unless you really need public access.
 
@@ -138,6 +138,7 @@ Older checkout may still exist at `/home/ubuntu/apps/kaygram`. Not required for 
 ## Firewall notes
 
 - Sofar bot: **no inbound ports**. Outbound HTTPS to Telegram + TMDB is enough.
+- Sofar web: **80/443** via Caddy (see README). Prefer the checked-in [`deploy/Caddyfile`](../deploy/Caddyfile) (HSTS, CSP, nosniff, Referrer-Policy, immutable `/assets/*`).
 - Cockpit: **9090** only if you open it in Oracle Security Lists / NSG.
 - SSH: **22** should already be allowed (how you log in).
 
@@ -154,9 +155,9 @@ scp vps:/home/ubuntu/so-far/data/sofar.db ~/Desktop/sofar-backup-$(date +%F).db
 To restore:
 
 ```bash
-ssh vps 'sudo systemctl stop sofar-bot'
+ssh vps 'sudo systemctl stop sofar-bot sofar-web'
 scp ~/path/to/sofar.db vps:/home/ubuntu/so-far/data/sofar.db
-ssh vps 'sudo systemctl start sofar-bot'
+ssh vps 'sudo systemctl start sofar-bot sofar-web'
 ```
 
 ## Quick checklist
@@ -174,3 +175,4 @@ ssh vps 'sudo systemctl start sofar-bot'
 - Never commit `.env` or the SSH private key.
 - Prefer Cockpit over SSH tunnel instead of opening 9090 to the whole internet.
 - This VM is low on RAM - watch Cockpit’s memory panel before adding more services.
+- Keep `.env` and `data/*.db` mode `600`, and `data/` mode `700`.

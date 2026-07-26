@@ -17,6 +17,13 @@ MemoryHigh=250M
 
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# App lives under /home; allow the checkout (data/, optional .pyc) while
+# ProtectSystem=strict keeps the rest of the filesystem read-only.
+ReadWritePaths=__APPDIR__
 
 [Install]
 WantedBy=multi-user.target

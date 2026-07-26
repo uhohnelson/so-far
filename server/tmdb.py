@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -73,19 +74,41 @@ class TitleDetail:
     providers: list[dict] = field(default_factory=list)  # {name, logo_path}
 
 
+_LIST_CACHE_TTL_SEC = 30 * 60
+
+
 class TmdbClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._season_cache: dict[tuple[int, int], list[EpisodeInfo]] = {}
+        self._list_cache: dict[tuple, tuple[float, list[SearchResult]]] = {}
+        self._client = httpx.Client(
+            base_url=self.settings.tmdb_base_url, timeout=20.0
+        )
+
+    def close(self) -> None:
+        self._client.close()
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         query = {"api_key": self.settings.tmdb_api_key}
         if params:
             query.update(params)
-        with httpx.Client(base_url=self.settings.tmdb_base_url, timeout=20.0) as client:
-            response = client.get(path, params=query)
-            response.raise_for_status()
-            return response.json()
+        response = self._client.get(path, params=query)
+        response.raise_for_status()
+        return response.json()
+
+    def _list_cache_get(self, key: tuple) -> list[SearchResult] | None:
+        hit = self._list_cache.get(key)
+        if hit is None:
+            return None
+        expires_at, results = hit
+        if time.monotonic() >= expires_at:
+            self._list_cache.pop(key, None)
+            return None
+        return results
+
+    def _list_cache_set(self, key: tuple, results: list[SearchResult]) -> None:
+        self._list_cache[key] = (time.monotonic() + _LIST_CACHE_TTL_SEC, results)
 
     def _parse_result(self, item: dict, media_type: str | None = None) -> SearchResult | None:
         mt = media_type or item.get("media_type")
@@ -132,6 +155,10 @@ class TmdbClient:
         return results
 
     def trending(self, limit: int = 8, media_type: str | None = None) -> list[SearchResult]:
+        cache_key = ("trending", media_type or "all", limit)
+        cached = self._list_cache_get(cache_key)
+        if cached is not None:
+            return cached
         path = f"/trending/{media_type or 'all'}/week"
         data = self._get(path)
         results: list[SearchResult] = []
@@ -141,11 +168,16 @@ class TmdbClient:
                 results.append(parsed)
             if len(results) >= limit:
                 break
+        self._list_cache_set(cache_key, results)
         return results
 
     def top_rated(self, media_type: str, limit: int = 8) -> list[SearchResult]:
         if media_type not in {"movie", "tv"}:
             raise ValueError("media_type must be movie or tv")
+        cache_key = ("top_rated", media_type, limit)
+        cached = self._list_cache_get(cache_key)
+        if cached is not None:
+            return cached
         data = self._get(f"/{media_type}/top_rated")
         results: list[SearchResult] = []
         for item in data.get("results", []):
@@ -155,6 +187,7 @@ class TmdbClient:
                 results.append(parsed)
             if len(results) >= limit:
                 break
+        self._list_cache_set(cache_key, results)
         return results
 
     def _parse_cast(self, credits: dict | None, limit: int = 16) -> list[CastMember]:

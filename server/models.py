@@ -88,17 +88,19 @@ class LoginCode(Base):
 
 
 class ApiToken(Base):
-    """Long-lived bearer token for the web app."""
+    """Long-lived bearer token for the web app (SHA-256 hash stored at rest)."""
 
     __tablename__ = "api_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # SHA-256 hex digest of the raw bearer token (never store plaintext).
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship()
 

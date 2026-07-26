@@ -1,0 +1,23 @@
+# Example Caddyfile for Sofar (TLS + security headers + asset caching).
+# Copy to /etc/caddy/Caddyfile and replace the hostname.
+
+sofar.example.com {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Report-friendly baseline: allow app + TMDB images + YouTube embeds.
+		Content-Security-Policy "default-src 'self'; img-src 'self' https://image.tmdb.org data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://www.youtube.com https://youtube.com; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
+	@static path /assets/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+
+	@api path /api/*
+	header @api Cache-Control "no-store"
+
+	reverse_proxy 127.0.0.1:8000
+}

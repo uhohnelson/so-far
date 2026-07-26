@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -20,12 +21,25 @@ from server.models import (
 from server.tmdb import TmdbClient
 
 LOGIN_CODE_TTL = timedelta(minutes=10)
+API_TOKEN_TTL = timedelta(days=90)
+TITLE_CACHE_TTL = timedelta(hours=48)
+LAST_USED_THROTTLE = timedelta(minutes=30)
 # No confusable characters (0/O, 1/I/L).
 _CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def create_login_code(db: Session, user: User) -> LoginCode:
@@ -39,39 +53,68 @@ def create_login_code(db: Session, user: User) -> LoginCode:
     return row
 
 
-def exchange_login_code(db: Session, code: str) -> ApiToken | None:
-    """Trade a valid login code for a long-lived API token. Consumes the code."""
-    row = db.scalar(select(LoginCode).where(LoginCode.code == code.strip().upper()))
-    if not row:
-        return None
-    expires = row.expires_at
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires < _utcnow():
-        db.delete(row)
+def exchange_login_code(db: Session, code: str) -> tuple[str, ApiToken] | None:
+    """Trade a valid login code for a long-lived API token.
+
+    Consumes the code atomically (DELETE … RETURNING). Returns
+    ``(raw_bearer_token, ApiToken)`` — only the hash is stored.
+    """
+    normalized = code.strip().upper()
+    now = _utcnow()
+    # Single-consume: first DELETE wins under SQLite's write lock.
+    consumed = db.execute(
+        delete(LoginCode)
+        .where(LoginCode.code == normalized)
+        .returning(LoginCode.user_id, LoginCode.expires_at)
+    ).one_or_none()
+    if consumed is None:
         db.commit()
         return None
-    token = ApiToken(user_id=row.user_id, token=secrets.token_urlsafe(32))
+    user_id, expires_at = consumed
+    if _as_utc(expires_at) < now:
+        db.commit()
+        return None
+
+    raw = secrets.token_urlsafe(32)
+    token = ApiToken(
+        user_id=user_id,
+        token=_hash_token(raw),
+        expires_at=now + API_TOKEN_TTL,
+    )
     db.add(token)
-    db.delete(row)
     db.commit()
-    db.refresh(token)
-    return token
+    token = db.scalar(
+        select(ApiToken).options(joinedload(ApiToken.user)).where(ApiToken.id == token.id)
+    )
+    assert token is not None
+    return raw, token
 
 
 def get_user_by_token(db: Session, token: str) -> User | None:
+    digest = _hash_token(token)
     row = db.scalar(
-        select(ApiToken).options(joinedload(ApiToken.user)).where(ApiToken.token == token)
+        select(ApiToken)
+        .options(joinedload(ApiToken.user))
+        .where(ApiToken.token == digest)
     )
     if not row:
         return None
-    row.last_used_at = _utcnow()
-    db.commit()
+    now = _utcnow()
+    if _as_utc(row.expires_at) < now:
+        db.delete(row)
+        db.commit()
+        return None
+    last = row.last_used_at
+    if last is not None:
+        last = _as_utc(last)
+    if last is None or now - last >= LAST_USED_THROTTLE:
+        row.last_used_at = now
+        db.commit()
     return row.user
 
 
 def revoke_token(db: Session, token: str) -> None:
-    db.execute(delete(ApiToken).where(ApiToken.token == token))
+    db.execute(delete(ApiToken).where(ApiToken.token == _hash_token(token)))
     db.commit()
 
 
@@ -95,11 +138,18 @@ def get_or_create_user(
 def upsert_title_from_tmdb(
     db: Session, tmdb: TmdbClient, media_type: str, tmdb_id: int
 ) -> Title:
-    detail = tmdb.get_title(media_type, tmdb_id)
     mt = MediaType(media_type)
     title = db.scalar(
         select(Title).where(Title.tmdb_id == tmdb_id, Title.media_type == mt)
     )
+    if title and title.cached_metadata:
+        updated = title.updated_at
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        if _utcnow() - updated < TITLE_CACHE_TTL:
+            return title
+
+    detail = tmdb.get_title(media_type, tmdb_id)
     seasons_payload = [
         {
             "season_number": s.season_number,

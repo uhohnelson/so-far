@@ -10,7 +10,7 @@ import { WatchListSkeleton } from './Skeletons'
 
 function thumbUrl(url: string | null): string | null {
   if (!url) return null
-  return url.replace(/\/w(500|342)\//, '/w185/')
+  return url.replace(/\/w(500|342|185)\//, '/w185/')
 }
 
 function daysUntil(dateStr: string | null): number | null {

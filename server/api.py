@@ -13,8 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server import services
+from server.config import get_settings
 from server.database import get_db, init_db
 from server.models import Title, User, UserTitle, WatchStatus
+from server.rate_limit import exchange_limiter
 from server.schemas import (
     AddLibraryIn,
     AuthOut,
@@ -41,15 +43,36 @@ WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 _bearer = HTTPBearer(auto_error=False)
 
 
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or "unknown"
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
 def create_app() -> FastAPI:
     tmdb = TmdbClient()
+    settings = get_settings()
+    debug = settings.sofar_debug
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_db()
         yield
+        close = getattr(tmdb, "close", None)
+        if callable(close):
+            close()
 
-    app = FastAPI(title="Sofar API", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Sofar API",
+        version="0.3.0",
+        lifespan=lifespan,
+        docs_url="/docs" if debug else None,
+        redoc_url="/redoc" if debug else None,
+        openapi_url="/openapi.json" if debug else None,
+    )
 
     app.add_middleware(
         CORSMiddleware,
@@ -80,6 +103,43 @@ def create_app() -> FastAPI:
     def _title_out(title: Title, *, lite: bool = False) -> TitleOut:
         meta = _meta(title)
         seasons_raw = meta.get("seasons") or []
+        if lite:
+            seasons = [
+                SeasonOut(
+                    season_number=s["season_number"],
+                    episode_count=s.get("episode_count"),
+                    name=s.get("name"),
+                    poster_url=None,
+                    air_date=s.get("air_date"),
+                )
+                for s in seasons_raw
+                if s.get("season_number") is not None
+            ] or None
+            return TitleOut(
+                id=title.id,
+                tmdb_id=title.tmdb_id,
+                media_type=title.media_type,
+                title=title.title,
+                year=title.year,
+                overview=None,
+                poster_path=title.poster_path,
+                poster_url=tmdb.poster_url(title.poster_path, size="w185"),
+                backdrop_url=None,
+                tagline=None,
+                genres=[],
+                runtime=None,
+                status=None,
+                vote_average=None,
+                networks=[],
+                number_of_seasons=meta.get("number_of_seasons"),
+                number_of_episodes=None,
+                seasons=seasons,
+                cast=[],
+                release_date=meta.get("release_date"),
+                trailer_url=None,
+                providers=[],
+            )
+
         seasons = [
             SeasonOut(
                 season_number=s["season_number"],
@@ -91,47 +151,38 @@ def create_app() -> FastAPI:
             for s in seasons_raw
             if s.get("season_number") is not None
         ] or None
-        if lite:
-            cast: list[CastOut] = []
-            providers: list[ProviderOut] = []
-            trailer_url = None
-            overview = None
-            tagline = None
-        else:
-            cast = [
-                CastOut(
-                    id=c["id"],
-                    name=c["name"],
-                    character=c.get("character"),
-                    profile_url=tmdb.poster_url(c.get("profile_path"), size="w185"),
-                )
-                for c in meta.get("cast") or []
-            ]
-            providers = [
-                ProviderOut(
-                    name=p["name"],
-                    logo_url=tmdb.poster_url(p.get("logo_path"), size="w92"),
-                )
-                for p in meta.get("providers") or []
-                if p.get("name")
-            ]
-            trailer_key = meta.get("trailer_key")
-            trailer_url = (
-                f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
+        cast = [
+            CastOut(
+                id=c["id"],
+                name=c["name"],
+                character=c.get("character"),
+                profile_url=tmdb.poster_url(c.get("profile_path"), size="w185"),
             )
-            overview = title.overview
-            tagline = meta.get("tagline")
+            for c in meta.get("cast") or []
+        ]
+        providers = [
+            ProviderOut(
+                name=p["name"],
+                logo_url=tmdb.poster_url(p.get("logo_path"), size="w92"),
+            )
+            for p in meta.get("providers") or []
+            if p.get("name")
+        ]
+        trailer_key = meta.get("trailer_key")
+        trailer_url = (
+            f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
+        )
         return TitleOut(
             id=title.id,
             tmdb_id=title.tmdb_id,
             media_type=title.media_type,
             title=title.title,
             year=title.year,
-            overview=overview,
+            overview=title.overview,
             poster_path=title.poster_path,
             poster_url=tmdb.poster_url(title.poster_path, size="w342"),
             backdrop_url=tmdb.poster_url(meta.get("backdrop_path"), size="w780"),
-            tagline=tagline,
+            tagline=meta.get("tagline"),
             genres=meta.get("genres") or [],
             runtime=meta.get("runtime"),
             status=meta.get("status"),
@@ -198,14 +249,24 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/api/auth/exchange", response_model=AuthOut)
-    def exchange_code(body: ExchangeCodeIn, db: Session = Depends(get_db)) -> AuthOut:
-        token = services.exchange_login_code(db, body.code)
-        if token is None:
+    def exchange_code(
+        body: ExchangeCodeIn,
+        request: Request,
+        db: Session = Depends(get_db),
+    ) -> AuthOut:
+        ip = _client_ip(request)
+        limited = exchange_limiter.check(ip)
+        if limited:
+            raise HTTPException(status_code=429, detail=limited)
+        result = services.exchange_login_code(db, body.code)
+        if result is None:
+            exchange_limiter.record_failure(ip)
             raise HTTPException(
                 status_code=401,
                 detail="Code is wrong or expired. Get a fresh one from the bot with /app.",
             )
-        return AuthOut(token=token.token, user=_user_out(token.user, db))
+        raw_token, token = result
+        return AuthOut(token=raw_token, user=_user_out(token.user, db))
 
     @app.post("/api/auth/logout")
     def logout(

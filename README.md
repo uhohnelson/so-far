@@ -130,9 +130,27 @@ sudo nano /etc/caddy/Caddyfile
 
 ```caddyfile
 sofar.example.com {
+    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; img-src 'self' https://image.tmdb.org data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://www.youtube.com https://youtube.com; base-uri 'self'; form-action 'self'"
+        -Server
+    }
+
+    @static path /assets/*
+    header @static Cache-Control "public, max-age=31536000, immutable"
+
+    @api path /api/*
+    header @api Cache-Control "no-store"
+
     reverse_proxy 127.0.0.1:8000
 }
 ```
+
+A checked-in example lives at [`deploy/Caddyfile`](deploy/Caddyfile).
 
 ```bash
 sudo systemctl restart caddy
@@ -203,7 +221,7 @@ SQLite file: `data/sofar.db` (path from `DATABASE_URL` in `.env`).
 | `titles` | Cached TMDB movies/shows |
 | `user_titles` | Your library row: status + season/episode |
 | `login_codes` | Short-lived `/app` codes (10 min, single use) |
-| `api_tokens` | Web app bearer tokens |
+| `api_tokens` | Web app bearer tokens (SHA-256 hash at rest; 90-day expiry) |
 
 Tables are created automatically on bot/API startup. No separate migration step for MVP.
 
@@ -219,5 +237,6 @@ sqlite3 data/sofar.db "SELECT * FROM user_titles;"
 - Secrets stay in `.env` (gitignored).
 - Adding the same TMDB title again updates status instead of duplicating.
 - On startup the bot registers slash-commands with Telegram (type `/` in chat to see them).
-- Web tokens are bearer tokens in `localStorage`; `/app` codes expire after 10 minutes and work once.
+- Web tokens are hashed at rest (SHA-256); the raw bearer is shown once at login and kept in `localStorage`. Tokens expire after 90 days. `/app` codes expire after 10 minutes and work once.
+- After a deploy that introduces token hashing, existing sessions are wiped — users must `/app` re-login.
 - Still to come: episode air alerts (Phase 2) and a custom 404 page for the web app.

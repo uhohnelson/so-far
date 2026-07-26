@@ -93,9 +93,16 @@ class FakeTmdb:
     def poster_url(self, poster_path, size="w500"):
         return f"https://image.tmdb.org/t/p/{size}{poster_path}" if poster_path else None
 
+    def close(self):
+        pass
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    from server.rate_limit import exchange_limiter
+
+    exchange_limiter.reset()
+
     engine = create_engine(
         f"sqlite:///{tmp_path/'test.db'}", connect_args={"check_same_thread": False}
     )
@@ -272,6 +279,65 @@ def test_code_is_single_use(client):
         db.close()
     assert client.post("/api/auth/exchange", json={"code": code}).status_code == 200
     assert client.post("/api/auth/exchange", json={"code": code}).status_code == 401
+
+
+def test_token_stored_as_sha256_hash(client):
+    import hashlib
+
+    from sqlalchemy import select
+
+    from server.models import ApiToken
+
+    raw = _login(client)
+    db = client.session_factory()
+    try:
+        stored = db.scalars(select(ApiToken)).all()
+        assert len(stored) == 1
+        assert stored[0].token == hashlib.sha256(raw.encode()).hexdigest()
+        assert stored[0].token != raw
+        assert stored[0].expires_at is not None
+    finally:
+        db.close()
+
+
+def test_library_idor_returns_404(client):
+    token_a = _login(client)
+    item_id = client.post(
+        "/api/library",
+        headers=_auth(token_a),
+        json={"tmdb_id": 1396, "media_type": "tv", "status": "watching"},
+    ).json()["id"]
+
+    db = client.session_factory()
+    try:
+        other = services.get_or_create_user(db, 9998887, "Other")
+        code = services.create_login_code(db, other).code
+    finally:
+        db.close()
+    token_b = client.post("/api/auth/exchange", json={"code": code}).json()["token"]
+    headers_b = _auth(token_b)
+
+    assert client.delete(f"/api/library/{item_id}", headers=headers_b).status_code == 404
+    assert (
+        client.post(
+            f"/api/library/{item_id}/progress",
+            headers=headers_b,
+            json={"season": 1, "episode": 2},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(f"/api/library/{item_id}/watched", headers=headers_b).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/library/{item_id}/episodes",
+            headers=headers_b,
+            json={"season": 1, "episode": 1, "mark_previous": False},
+        ).status_code
+        == 404
+    )
 
 
 def test_add_progress_and_remove_flow(client):

@@ -44,6 +44,8 @@ def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:  # noqa: AR
     if not settings.database_url.startswith("sqlite"):
         return
     cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
@@ -71,6 +73,18 @@ def init_db() -> None:
                             "REFERENCES titles(id) ON DELETE SET NULL"
                         )
                     )
+        if "api_tokens" in insp.get_table_names():
+            cols = {c["name"] for c in insp.get_columns("api_tokens")}
+            if "expires_at" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE api_tokens ADD COLUMN expires_at DATETIME"
+                        )
+                    )
+                    # Token hashing landed with expires_at: plaintext rows are
+                    # unverifiable. Users must /app re-login.
+                    conn.execute(text("DELETE FROM api_tokens"))
 
 
 def get_db() -> Generator[Session, None, None]:
