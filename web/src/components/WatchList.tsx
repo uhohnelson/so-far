@@ -72,6 +72,20 @@ function episodeBadge(ep: Episode, seasons: LibraryItem['title']['seasons']): st
   return 'Mid-season'
 }
 
+function seasonCouldBeUpcoming(airDate: string | null | undefined): boolean {
+  // No date → might be TBA; must check episodes.
+  if (!airDate) return true
+  // Future season premiere → worth fetching.
+  if (daysUntil(airDate) != null) return true
+  // Already-started seasons can still have unaired episodes (mid-season).
+  // Skip only clearly stale seasons (aired more than ~18 months ago).
+  const d = new Date(`${airDate.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return true
+  const cutoff = new Date()
+  cutoff.setMonth(cutoff.getMonth() - 18)
+  return d >= cutoff
+}
+
 async function resolveTvUpcoming(item: LibraryItem): Promise<UpcomingRow | null> {
   if (item.title.media_type !== 'tv') return null
   const seasons = (item.title.seasons ?? [])
@@ -79,17 +93,21 @@ async function resolveTvUpcoming(item: LibraryItem): Promise<UpcomingRow | null>
     .sort((a, b) => a.season_number - b.season_number)
   if (!seasons.length) return null
 
-  let season = item.current_season && item.current_season >= 1
-    ? item.current_season
-    : seasons[0].season_number
+  // Watching: resume from cursor. Want-list with no cursor: start at the
+  // latest season so we don't walk S1..Sn of finished catalogue shows.
+  const hasCursor = !!(item.current_season && item.current_season >= 1)
+  let season = hasCursor
+    ? item.current_season!
+    : seasons[seasons.length - 1].season_number
   let fromEp = item.current_episode && item.current_episode >= 1
     ? item.current_episode
     : 1
 
-  // Prefer season air dates as a cheap filter before fetching episodes.
   for (let i = 0; i < seasons.length; i++) {
     const s = seasons[i]
     if (s.season_number < season) continue
+    // Skip ancient seasons (no plausible unaired episodes left).
+    if (!seasonCouldBeUpcoming(s.air_date)) continue
     const startEp = s.season_number === season ? fromEp : 1
     let episodes = getCachedSeason(item.title.tmdb_id, s.season_number)
     if (!episodes) {
@@ -357,7 +375,7 @@ export default function WatchList({
     setUpcoming(null)
     ;(async () => {
       const rows = (
-        await mapLimit(candidates, 4, async (item) => {
+        await mapLimit(candidates, 6, async (item) => {
           if (item.title.media_type === 'movie') {
             return movieUpcoming(item)
           }

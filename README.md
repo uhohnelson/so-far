@@ -136,7 +136,7 @@ sofar.example.com {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
-        Content-Security-Policy "default-src 'self'; img-src 'self' https://image.tmdb.org data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://www.youtube.com https://youtube.com; base-uri 'self'; form-action 'self'"
+        Content-Security-Policy "default-src 'self'; img-src 'self' https://image.tmdb.org data:; media-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'; connect-src 'self' https://image.tmdb.org; frame-src https://www.youtube.com https://youtube.com; base-uri 'self'; form-action 'self'"
         -Server
     }
 
