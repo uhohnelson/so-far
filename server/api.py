@@ -586,6 +586,8 @@ def create_app() -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str, request: Request) -> FileResponse:
+            if path in {"docs", "redoc", "openapi.json"}:
+                raise HTTPException(status_code=404, detail="Not found")
             candidate = (WEB_DIST / path).resolve()
             if path and candidate.is_file() and candidate.is_relative_to(WEB_DIST):
                 return FileResponse(candidate)
