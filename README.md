@@ -132,6 +132,8 @@ sudo nano /etc/caddy/Caddyfile
 sofar.example.com {
     encode gzip
 
+    root * /home/ubuntu/so-far/web/dist
+
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
@@ -144,9 +146,15 @@ sofar.example.com {
     header @static Cache-Control "public, max-age=31536000, immutable"
 
     @api path /api/*
-    header @api Cache-Control "no-store"
+    handle @api {
+        header Cache-Control "no-store"
+        reverse_proxy 127.0.0.1:8000
+    }
 
-    reverse_proxy 127.0.0.1:8000
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
 }
 ```
 

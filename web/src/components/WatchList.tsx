@@ -146,7 +146,7 @@ interface WatchListProps {
   markingId: number | null
 }
 
-type SubTab = 'watch' | 'want'
+type SubTab = 'watch' | 'want' | 'watched'
 
 function totalEps(item: LibraryItem): number | null {
   const seasons = item.title.seasons
@@ -297,6 +297,11 @@ export default function WatchList({
     return false
   })
 
+  const watched = useMemo(
+    () => scoped.filter((i) => i.status === 'watched'),
+    [scoped],
+  )
+
   const candidates = useMemo(
     () => scoped.filter((i) => i.status === 'want' || i.status === 'watching'),
     [scoped],
@@ -416,6 +421,12 @@ export default function WatchList({
           onClick={() => setSub('want')}
         >
           Upcoming
+        </button>
+        <button
+          className={sub === 'watched' ? 'active' : ''}
+          onClick={() => setSub('watched')}
+        >
+          Watched
         </button>
         {sub === 'watch' && watching.length > 0 && (
           <button
@@ -646,6 +657,52 @@ export default function WatchList({
                 <div className="upcoming-days" aria-label={`${row.days} days`}>
                   <strong>{row.days}</strong>
                   <span>{row.days === 1 ? 'day' : 'days'}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {sub === 'watched' && watched.length === 0 && (
+          <div className="empty">
+            <div className="big">{mediaType === 'tv' ? '✅' : '🍿'}</div>
+            Nothing marked watched yet.
+            <br />
+            Finish something from your watch list to see it here.
+          </div>
+        )}
+
+        {sub === 'watched' && watched.length > 0 && (
+          <div className="ep-list">
+            {watched.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="upcoming-card"
+                onClick={() => onOpen(item)}
+              >
+                {thumbUrl(item.title.poster_url) ? (
+                  <img
+                    className="thumb"
+                    src={thumbUrl(item.title.poster_url)!}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="thumb ph">🎬</div>
+                )}
+                <div className="body">
+                  <span className="show-chip">
+                    {item.title.title}
+                    <span className="chev">›</span>
+                  </span>
+                  <div className="ep-code">
+                    {item.title.media_type === 'tv' ? 'Show' : 'Movie'}
+                    <span className="upcoming-badge">Watched</span>
+                  </div>
+                  <div className="ep-title">
+                    {item.title.year ? String(item.title.year) : 'Completed'}
+                  </div>
                 </div>
               </button>
             ))}

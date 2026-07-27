@@ -106,6 +106,10 @@ class AddLibraryIn(BaseModel):
     current_episode: int | None = None
 
 
+class LibraryStatusIn(BaseModel):
+    status: WatchStatus
+
+
 class ProgressIn(BaseModel):
     season: int = Field(ge=1)
     episode: int = Field(ge=1)

@@ -1,4 +1,4 @@
-"""Simple in-memory rate limiters for auth endpoints."""
+"""Simple in-memory rate limiters for auth and TMDB proxy endpoints."""
 
 from __future__ import annotations
 
@@ -67,4 +67,53 @@ class ExchangeRateLimiter:
             self._blocked_until.clear()
 
 
+class SlidingWindowRateLimiter:
+    """Per-key sliding window limit for authenticated TMDB proxy routes."""
+
+    def __init__(
+        self,
+        *,
+        max_requests: int,
+        window_seconds: float = 60.0,
+        message: str = "Too many requests. Slow down and try again.",
+    ) -> None:
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.message = message
+        self._lock = threading.Lock()
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    def check(self, key: str) -> str | None:
+        now = time.monotonic()
+        with self._lock:
+            hits = [t for t in self._hits[key] if t >= now - self.window_seconds]
+            if len(hits) >= self.max_requests:
+                self._hits[key] = hits
+                return self.message
+            hits.append(now)
+            self._hits[key] = hits
+            return None
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+
+
 exchange_limiter = ExchangeRateLimiter()
+
+tmdb_search_limiter = SlidingWindowRateLimiter(
+    max_requests=20,
+    message="Too many searches. Wait a moment and try again.",
+)
+tmdb_feed_limiter = SlidingWindowRateLimiter(
+    max_requests=40,
+    message="Too many browse requests. Wait a moment and try again.",
+)
+tmdb_season_limiter = SlidingWindowRateLimiter(
+    max_requests=30,
+    message="Too many season requests. Wait a moment and try again.",
+)
+tmdb_detail_limiter = SlidingWindowRateLimiter(
+    max_requests=60,
+    message="Too many title requests. Wait a moment and try again.",
+)

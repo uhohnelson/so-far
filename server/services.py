@@ -279,6 +279,29 @@ def get_library_row(db: Session, user: User, user_title_id: int) -> UserTitle | 
     )
 
 
+def set_library_status(
+    db: Session, user: User, user_title_id: int, status: WatchStatus
+) -> UserTitle | None:
+    row = get_library_row(db, user, user_title_id)
+    if not row:
+        return None
+    title = row.title
+    current_season = row.current_season
+    current_episode = row.current_episode
+    if status == WatchStatus.watching and title.media_type == MediaType.tv:
+        current_season = current_season or 1
+        current_episode = current_episode or 1
+    else:
+        current_season = None
+        current_episode = None
+    row.status = status
+    row.current_season = current_season
+    row.current_episode = current_episode
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def remove_from_library(db: Session, user: User, user_title_id: int) -> bool:
     row = get_library_row(db, user, user_title_id)
     if not row:

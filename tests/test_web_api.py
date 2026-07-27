@@ -134,9 +134,19 @@ class FakeTmdb:
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    from server.rate_limit import exchange_limiter
+    from server.rate_limit import (
+        exchange_limiter,
+        tmdb_detail_limiter,
+        tmdb_feed_limiter,
+        tmdb_search_limiter,
+        tmdb_season_limiter,
+    )
 
     exchange_limiter.reset()
+    tmdb_search_limiter.reset()
+    tmdb_feed_limiter.reset()
+    tmdb_season_limiter.reset()
+    tmdb_detail_limiter.reset()
 
     engine = create_engine(
         f"sqlite:///{tmp_path/'test.db'}", connect_args={"check_same_thread": False}
@@ -435,3 +445,36 @@ def test_person_detail_and_credits(client):
     credits = client.get("/api/person/1/credits", headers=_auth(token))
     assert credits.status_code == 200
     assert credits.json()[0]["title"] == "Breaking Bad"
+
+
+def test_search_rate_limit_returns_429(client, monkeypatch):
+    from server.rate_limit import tmdb_search_limiter
+
+    tmdb_search_limiter.reset()
+    monkeypatch.setattr(tmdb_search_limiter, "max_requests", 2)
+
+    token = _login(client)
+    headers = _auth(token)
+    assert client.get("/api/search", headers=headers, params={"q": "bad"}).status_code == 200
+    assert client.get("/api/search", headers=headers, params={"q": "bad"}).status_code == 200
+    res = client.get("/api/search", headers=headers, params={"q": "bad"})
+    assert res.status_code == 429
+    assert "search" in res.json()["detail"].lower()
+
+
+def test_patch_library_status(client):
+    token = _login(client)
+    item_id = client.post(
+        "/api/library",
+        headers=_auth(token),
+        json={"tmdb_id": 1396, "media_type": "tv", "status": "watching"},
+    ).json()["id"]
+
+    patched = client.patch(
+        f"/api/library/{item_id}",
+        headers=_auth(token),
+        json={"status": "want"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["status"] == "want"
+    assert patched.json()["current_season"] is None

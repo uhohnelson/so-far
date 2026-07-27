@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import httpx
@@ -75,12 +76,22 @@ class TitleDetail:
 
 
 _LIST_CACHE_TTL_SEC = 30 * 60
+_SEASON_CACHE_TTL_SEC = 30 * 60
+_SEASON_CACHE_MAX = 200
+
+
+@dataclass
+class _SeasonCacheEntry:
+    expires_at: float
+    episodes: list[EpisodeInfo]
 
 
 class TmdbClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self._season_cache: dict[tuple[int, int], list[EpisodeInfo]] = {}
+        self._season_cache: OrderedDict[tuple[int, int], _SeasonCacheEntry] = (
+            OrderedDict()
+        )
         self._list_cache: dict[tuple, tuple[float, list[SearchResult]]] = {}
         self._client = httpx.Client(
             base_url=self.settings.tmdb_base_url, timeout=20.0
@@ -93,9 +104,42 @@ class TmdbClient:
         query = {"api_key": self.settings.tmdb_api_key}
         if params:
             query.update(params)
-        response = self._client.get(path, params=query)
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(3):
+            response = self._client.get(path, params=query)
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response.json()
+            if attempt >= 2:
+                response.raise_for_status()
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait = float(retry_after)
+                except ValueError:
+                    wait = 2**attempt
+            else:
+                wait = 2**attempt
+            time.sleep(wait)
+        raise RuntimeError("TMDB request failed after retries")
+
+    def _season_cache_get(self, key: tuple[int, int]) -> list[EpisodeInfo] | None:
+        entry = self._season_cache.get(key)
+        if entry is None:
+            return None
+        if time.monotonic() >= entry.expires_at:
+            self._season_cache.pop(key, None)
+            return None
+        self._season_cache.move_to_end(key)
+        return entry.episodes
+
+    def _season_cache_set(self, key: tuple[int, int], episodes: list[EpisodeInfo]) -> None:
+        self._season_cache[key] = _SeasonCacheEntry(
+            time.monotonic() + _SEASON_CACHE_TTL_SEC,
+            episodes,
+        )
+        self._season_cache.move_to_end(key)
+        while len(self._season_cache) > _SEASON_CACHE_MAX:
+            self._season_cache.popitem(last=False)
 
     def _list_cache_get(self, key: tuple) -> list[SearchResult] | None:
         hit = self._list_cache.get(key)
@@ -319,14 +363,14 @@ class TmdbClient:
 
     def get_season_episodes(self, tmdb_id: int, season: int) -> list[EpisodeInfo]:
         cache_key = (tmdb_id, season)
-        hit = self._season_cache.get(cache_key)
+        hit = self._season_cache_get(cache_key)
         if hit is not None:
             return hit
         try:
             data = self._get(f"/tv/{tmdb_id}/season/{season}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                self._season_cache[cache_key] = []
+                self._season_cache_set(cache_key, [])
                 return []
             raise
         episodes: list[EpisodeInfo] = []
@@ -343,7 +387,7 @@ class TmdbClient:
                 )
             )
         result = [e for e in episodes if e.episode > 0]
-        self._season_cache[cache_key] = result
+        self._season_cache_set(cache_key, result)
         return result
 
     def get_episode(self, tmdb_id: int, season: int, episode: int) -> EpisodeInfo | None:

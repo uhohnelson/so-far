@@ -15,6 +15,7 @@ import type {
   SearchResult,
   Title,
   TitleDetail,
+  WatchStatus,
 } from '../types'
 import { DetailBodySkeleton, SeasonEpisodesSkeleton, ShelfSkeleton } from './Skeletons'
 import PersonSheet from './PersonSheet'
@@ -386,6 +387,16 @@ export default function DetailSheet({
       onMutated(null, `Removed ${title.title}`)
     })
 
+  const setStatus = (status: WatchStatus) =>
+    run(async () => {
+      if (!item || item.status === status) return
+      const updated = await api.updateLibraryStatus(item.id, status)
+      setDetail((prev) =>
+        prev ? { ...prev, library_item: updated } : prev,
+      )
+      onMutated(updated)
+    })
+
   const markMovie = () =>
     run(async () => {
       if (!title) return
@@ -649,6 +660,28 @@ export default function DetailSheet({
             </div>
 
             <div className="sheet-body">
+              {item && (
+                <div className="status-row" role="group" aria-label="List status">
+                  {(
+                    [
+                      ['want', 'Want'],
+                      ['watching', 'Watching'],
+                      ['watched', 'Watched'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={item.status === value ? 'on' : ''}
+                      disabled={busy}
+                      onClick={() => setStatus(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {title.media_type === 'movie' && (
                 <div className="fact-row">
                   {title.release_date && (

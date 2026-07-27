@@ -132,6 +132,12 @@ export const api = {
       body: JSON.stringify({ status: 'want', ...body }),
     }),
 
+  updateLibraryStatus: (id: number, status: WatchStatus) =>
+    request<LibraryItem>(`/library/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+
   removeFromLibrary: (id: number) =>
     request<{ ok: boolean }>(`/library/${id}`, { method: 'DELETE' }),
 

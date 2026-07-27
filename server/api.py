@@ -16,7 +16,13 @@ from server import services
 from server.config import get_settings
 from server.database import get_db, init_db
 from server.models import Title, User, UserTitle, WatchStatus
-from server.rate_limit import exchange_limiter
+from server.rate_limit import (
+    exchange_limiter,
+    tmdb_detail_limiter,
+    tmdb_feed_limiter,
+    tmdb_search_limiter,
+    tmdb_season_limiter,
+)
 from server.schemas import (
     AddLibraryIn,
     AuthOut,
@@ -24,6 +30,7 @@ from server.schemas import (
     EpisodeOut,
     ExchangeCodeIn,
     LibraryItemOut,
+    LibraryStatusIn,
     MarkEpisodeIn,
     PersonOut,
     ProgressIn,
@@ -51,6 +58,16 @@ def _client_ip(request: Request) -> str:
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
+
+
+def _tmdb_rate_key(request: Request, user: User) -> str:
+    return f"u{user.id}:{_client_ip(request)}"
+
+
+def _enforce_tmdb_limit(limiter, request: Request, user: User) -> None:
+    reason = limiter.check(_tmdb_rate_key(request, user))
+    if reason:
+        raise HTTPException(status_code=429, detail=reason)
 
 
 def create_app() -> FastAPI:
@@ -320,11 +337,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/search", response_model=list[SearchResultOut])
     def search(
+        request: Request,
         q: str = Query(min_length=1),
         media_type: str | None = Query(default=None),
         limit: int = Query(default=12, ge=1, le=20),
         user: User = Depends(current_user),
     ) -> list[SearchResultOut]:
+        _enforce_tmdb_limit(tmdb_search_limiter, request, user)
         mt = media_type if media_type in {"movie", "tv"} else None
         return [
             _search_out(r)
@@ -333,19 +352,23 @@ def create_app() -> FastAPI:
 
     @app.get("/api/trending", response_model=list[SearchResultOut])
     def trending(
+        request: Request,
         media_type: str | None = Query(default=None),
         limit: int = Query(default=12, ge=1, le=20),
         user: User = Depends(current_user),
     ) -> list[SearchResultOut]:
+        _enforce_tmdb_limit(tmdb_feed_limiter, request, user)
         mt = media_type if media_type in {"movie", "tv"} else None
         return [_search_out(r) for r in tmdb.trending(limit=limit, media_type=mt)]
 
     @app.get("/api/top-rated", response_model=list[SearchResultOut])
     def top_rated(
+        request: Request,
         media_type: str = Query(pattern="^(movie|tv)$"),
         limit: int = Query(default=12, ge=1, le=20),
         user: User = Depends(current_user),
     ) -> list[SearchResultOut]:
+        _enforce_tmdb_limit(tmdb_feed_limiter, request, user)
         return [
             _search_out(r)
             for r in tmdb.top_rated(media_type=media_type, limit=limit)
@@ -377,11 +400,13 @@ def create_app() -> FastAPI:
     def title_detail(
         media_type: str,
         tmdb_id: int,
+        request: Request,
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ) -> TitleDetailOut:
         if media_type not in {"movie", "tv"}:
             raise HTTPException(status_code=400, detail="media_type must be movie or tv")
+        _enforce_tmdb_limit(tmdb_detail_limiter, request, user)
         title = services.upsert_title_from_tmdb(db, tmdb, media_type, tmdb_id)
         row = _find_library(db, user, title)
         watched = []
@@ -403,11 +428,13 @@ def create_app() -> FastAPI:
     def title_similar(
         media_type: str,
         tmdb_id: int,
+        request: Request,
         limit: int = Query(default=12, ge=1, le=20),
         user: User = Depends(current_user),
     ) -> list[SearchResultOut]:
         if media_type not in {"movie", "tv"}:
             raise HTTPException(status_code=400, detail="media_type must be movie or tv")
+        _enforce_tmdb_limit(tmdb_feed_limiter, request, user)
         return [
             _search_out(r)
             for r in tmdb.get_recommendations(media_type, tmdb_id, limit=limit)
@@ -420,9 +447,11 @@ def create_app() -> FastAPI:
     def season_episodes(
         tmdb_id: int,
         season: int,
+        request: Request,
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ) -> SeasonEpisodesOut:
+        _enforce_tmdb_limit(tmdb_season_limiter, request, user)
         title = services.upsert_title_from_tmdb(db, tmdb, "tv", tmdb_id)
         watched = services.list_watched_episodes(db, user, title.id)
         episodes = []
@@ -467,6 +496,20 @@ def create_app() -> FastAPI:
             current_season=body.current_season,
             current_episode=body.current_episode,
         )
+        row = services.get_library_row(db, user, row.id)
+        assert row is not None
+        return _library_out(row)
+
+    @app.patch("/api/library/{user_title_id}", response_model=LibraryItemOut)
+    def update_library_status(
+        user_title_id: int,
+        body: LibraryStatusIn,
+        user: User = Depends(current_user),
+        db: Session = Depends(get_db),
+    ) -> LibraryItemOut:
+        row = services.set_library_status(db, user, user_title_id, body.status)
+        if not row:
+            raise HTTPException(status_code=404, detail="Not in library")
         row = services.get_library_row(db, user, row.id)
         assert row is not None
         return _library_out(row)
