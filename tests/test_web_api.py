@@ -39,6 +39,19 @@ class FakeTmdb:
     def top_rated(self, media_type, limit=8):
         return self.search("x", limit=limit, media_type=media_type)
 
+    def get_recommendations(self, media_type, tmdb_id, limit=12):
+        return [
+            SearchResult(
+                tmdb_id=600,
+                media_type="tv",
+                title="Better Call Saul",
+                year=2015,
+                overview="A prequel.",
+                poster_path="/bcs.jpg",
+                backdrop_path="/bcs-bd.jpg",
+            )
+        ]
+
     def get_title(self, media_type, tmdb_id):
         return TitleDetail(
             tmdb_id=tmdb_id,
@@ -185,6 +198,16 @@ def test_discover_feeds_support_movies_and_tv(client):
         )
         assert trending.status_code == 200
         assert top.status_code == 200
+
+
+def test_title_similar_returns_recommendations(client):
+    token = _login(client)
+    res = client.get("/api/titles/tv/1396/similar", headers=_auth(token))
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body) == 1
+    assert body[0]["title"] == "Better Call Saul"
+    assert body[0]["tmdb_id"] == 600
 
 
 def test_title_detail_includes_cast_and_genres(client):

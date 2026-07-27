@@ -16,7 +16,7 @@ import type {
   Title,
   TitleDetail,
 } from '../types'
-import { DetailBodySkeleton, SeasonEpisodesSkeleton } from './Skeletons'
+import { DetailBodySkeleton, SeasonEpisodesSkeleton, ShelfSkeleton } from './Skeletons'
 import PersonSheet from './PersonSheet'
 
 function seasonWatchedCount(keys: string[], seasonNumber: number) {
@@ -146,6 +146,7 @@ export default function DetailSheet({
   } | null>(null)
   const [personId, setPersonId] = useState<number | null>(null)
   const [personName, setPersonName] = useState('')
+  const [similar, setSimilar] = useState<SearchResult[] | null>(null)
 
   const loadSeason = async (tmdbId: number, seasonNumber: number) => {
     const cached = getCachedSeason(tmdbId, seasonNumber)
@@ -184,6 +185,7 @@ export default function DetailSheet({
     setHydrating(true)
     setOpenSeason(null)
     setEpisodesBySeason({})
+    setSimilar(null)
     setTab(seedType === 'tv' ? 'episodes' : 'about')
     setConfirm(null)
     ;(async () => {
@@ -224,6 +226,24 @@ export default function DetailSheet({
       return { ...prev, library_item: next }
     })
   }, [target])
+
+  useEffect(() => {
+    if (tab !== 'about' || similar !== null) return
+    const current = detail?.title
+    if (!current) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const items = await api.similar(current.media_type, current.tmdb_id)
+        if (!cancelled) setSimilar(items)
+      } catch {
+        if (!cancelled) setSimilar([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tab, detail?.title?.media_type, detail?.title?.tmdb_id, similar])
 
   const toggleSeason = (seasonNumber: number) => {
     if (openSeason === seasonNumber) {
@@ -739,6 +759,41 @@ export default function DetailSheet({
                         ))}
                       </div>
                     </>
+                  )}
+                  {(similar === null || similar.length > 0) && (
+                    <section className="sheet-shelf">
+                      <div className="section-label">You might like</div>
+                      {similar === null ? (
+                        <ShelfSkeleton count={4} />
+                      ) : (
+                        <div className="poster-row">
+                          {similar.map((r) => (
+                            <div
+                              key={`${r.media_type}-${r.tmdb_id}`}
+                              className="poster-card"
+                            >
+                              <button
+                                type="button"
+                                className="poster-hit"
+                                onClick={() => onOpenSearch?.(r)}
+                              >
+                                {r.poster_url ? (
+                                  <img
+                                    className="art"
+                                    src={r.poster_url}
+                                    alt={r.title}
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="art ph">🎬</div>
+                                )}
+                                <span className="caption">{r.title}</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
                   )}
                 </>
               )}

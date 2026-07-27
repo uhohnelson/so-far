@@ -171,6 +171,29 @@ class TmdbClient:
         self._list_cache_set(cache_key, results)
         return results
 
+    def get_recommendations(
+        self, media_type: str, tmdb_id: int, limit: int = 12
+    ) -> list[SearchResult]:
+        if media_type not in {"movie", "tv"}:
+            raise ValueError("media_type must be movie or tv")
+        cache_key = ("recommendations", media_type, tmdb_id, limit)
+        cached = self._list_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        data = self._get(f"/{media_type}/{tmdb_id}/recommendations")
+        results: list[SearchResult] = []
+        for item in data.get("results", []):
+            if item.get("id") == tmdb_id:
+                continue
+            item["media_type"] = media_type
+            parsed = self._parse_result(item)
+            if parsed:
+                results.append(parsed)
+            if len(results) >= limit:
+                break
+        self._list_cache_set(cache_key, results)
+        return results
+
     def top_rated(self, media_type: str, limit: int = 8) -> list[SearchResult]:
         if media_type not in {"movie", "tv"}:
             raise ValueError("media_type must be movie or tv")

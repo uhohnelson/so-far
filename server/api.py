@@ -397,6 +397,23 @@ def create_app() -> FastAPI:
         )
 
     @app.get(
+        "/api/titles/{media_type}/{tmdb_id}/similar",
+        response_model=list[SearchResultOut],
+    )
+    def title_similar(
+        media_type: str,
+        tmdb_id: int,
+        limit: int = Query(default=12, ge=1, le=20),
+        user: User = Depends(current_user),
+    ) -> list[SearchResultOut]:
+        if media_type not in {"movie", "tv"}:
+            raise HTTPException(status_code=400, detail="media_type must be movie or tv")
+        return [
+            _search_out(r)
+            for r in tmdb.get_recommendations(media_type, tmdb_id, limit=limit)
+        ]
+
+    @app.get(
         "/api/titles/tv/{tmdb_id}/season/{season}",
         response_model=SeasonEpisodesOut,
     )

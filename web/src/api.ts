@@ -107,6 +107,11 @@ export const api = {
   titleDetail: (mediaType: MediaType, tmdbId: number) =>
     request<TitleDetail>(`/titles/${mediaType}/${tmdbId}`),
 
+  similar: (mediaType: MediaType, tmdbId: number, limit = 12) =>
+    request<SearchResult[]>(
+      `/titles/${mediaType}/${tmdbId}/similar?limit=${limit}`,
+    ),
+
   seasonEpisodes: (tmdbId: number, season: number) =>
     request<{ season: number; episodes: Episode[] }>(
       `/titles/tv/${tmdbId}/season/${season}`,

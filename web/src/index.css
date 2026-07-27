@@ -1472,6 +1472,14 @@ input {
   margin: 18px 0 10px;
 }
 
+.sheet-shelf {
+  margin-top: 20px;
+}
+
+.sheet-shelf .section-label {
+  margin-bottom: 8px;
+}
+
 .sheet-tabs {
   display: flex;
   gap: 24px;
