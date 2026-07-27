@@ -1511,7 +1511,11 @@ input {
 .progress-rule-fill {
   height: 100%;
   background: var(--yellow);
-  transition: width 0.25s ease;
+  transition: width 0.25s ease, background 0.25s ease;
+}
+
+.progress-rule-fill.complete {
+  background: var(--purple);
 }
 
 .hero-copy .rating {
@@ -1902,12 +1906,19 @@ input {
   overflow: visible;
 }
 
+.season-header {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
 .season-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
-  background: transparent;
+  padding: 4px;
+  background: #fff;
 }
 
 .season-toggle {
@@ -1987,7 +1998,7 @@ input {
 }
 
 .season-progress .fill.full {
-  background: var(--purple);
+  background: var(--yellow);
 }
 
 .season-card.is-open .season-progress {
@@ -1995,7 +2006,7 @@ input {
 }
 
 .season-body {
-  padding: 0 0 8px;
+  padding: 8px 0 0;
   background: transparent;
   border-top: 0;
 }

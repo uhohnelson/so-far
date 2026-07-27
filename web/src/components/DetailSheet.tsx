@@ -22,17 +22,30 @@ function seasonWatchedCount(keys: string[], seasonNumber: number) {
   return keys.filter((k) => k.startsWith(`S${seasonNumber}E`)).length
 }
 
-function celebrateIfSeasonCompleted(
+function isShowFullyWatched(
+  keys: string[],
+  seasons: { season_number: number; episode_count: number | null }[],
+): boolean {
+  let watched = 0
+  let total = 0
+  for (const s of seasons) {
+    const count = s.episode_count ?? 0
+    total += count
+    watched += seasonWatchedCount(keys, s.season_number)
+  }
+  return total > 0 && watched >= total
+}
+
+function celebrateIfShowCompleted(
   beforeKeys: string[],
   afterKeys: string[],
-  seasonNumber: number,
-  episodeCount: number | null | undefined,
+  seasons: { season_number: number; episode_count: number | null }[] | null | undefined,
 ): boolean {
-  const total = episodeCount ?? 0
-  if (total <= 0) return false
-  const before = seasonWatchedCount(beforeKeys, seasonNumber)
-  const after = seasonWatchedCount(afterKeys, seasonNumber)
-  if (before < total && after >= total) {
+  if (!seasons?.length) return false
+  if (
+    !isShowFullyWatched(beforeKeys, seasons) &&
+    isShowFullyWatched(afterKeys, seasons)
+  ) {
     fireConfetti()
     return true
   }
@@ -367,28 +380,11 @@ export default function DetailSheet({
     const res = await api.markEpisode(libId, s, e, markPrevious)
     const refreshed = await refreshDetail(title.tmdb_id, 'tv')
     applyWatchedKeys(refreshed.watched_episodes)
-    const seasonMeta = title.seasons?.find((x) => x.season_number === s)
-    let celebrated = celebrateIfSeasonCompleted(
+    celebrateIfShowCompleted(
       beforeKeys,
       refreshed.watched_episodes,
-      s,
-      seasonMeta?.episode_count,
+      title.seasons,
     )
-    if (!celebrated && markPrevious && title.seasons) {
-      for (const season of title.seasons) {
-        if (season.season_number >= s) continue
-        if (
-          celebrateIfSeasonCompleted(
-            beforeKeys,
-            refreshed.watched_episodes,
-            season.season_number,
-            season.episode_count,
-          )
-        ) {
-          break
-        }
-      }
-    }
     invalidateCachedSeason(title.tmdb_id, s)
     if (markPrevious) await reloadSeasonsUpTo(title.tmdb_id, s)
     else await loadSeason(title.tmdb_id, s)
@@ -468,14 +464,10 @@ export default function DetailSheet({
         const res = await api.markSeason(lib.id, seasonNumber)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
         applyWatchedKeys(refreshed.watched_episodes)
-        const seasonMeta = title.seasons?.find(
-          (x) => x.season_number === seasonNumber,
-        )
-        celebrateIfSeasonCompleted(
+        celebrateIfShowCompleted(
           beforeKeys,
           refreshed.watched_episodes,
-          seasonNumber,
-          seasonMeta?.episode_count,
+          title.seasons,
         )
         invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
@@ -494,20 +486,11 @@ export default function DetailSheet({
       const res = await api.markAllSeasons(lib.id)
       const refreshed = await refreshDetail(title.tmdb_id, 'tv')
       applyWatchedKeys(refreshed.watched_episodes)
-      let celebrated = false
-      for (const season of title.seasons || []) {
-        const before = seasonWatchedCount(beforeKeys, season.season_number)
-        const total = season.episode_count ?? 0
-        const after = seasonWatchedCount(
-          refreshed.watched_episodes,
-          season.season_number,
-        )
-        if (total > 0 && before < total && after >= total) {
-          celebrated = true
-          break
-        }
-      }
-      if (celebrated) fireConfetti()
+      celebrateIfShowCompleted(
+        beforeKeys,
+        refreshed.watched_episodes,
+        title.seasons,
+      )
       setEpisodesBySeason({})
       if (openSeason != null) await loadSeason(title.tmdb_id, openSeason)
       onMutated(res.item, res.message)
@@ -612,7 +595,7 @@ export default function DetailSheet({
               aria-valuemax={100}
             >
               <div
-                className="progress-rule-fill"
+                className={`progress-rule-fill${overallProgress() >= 1 ? ' complete' : ''}`}
                 style={{ width: `${Math.round(overallProgress() * 100)}%` }}
               />
             </div>
@@ -768,50 +751,52 @@ export default function DetailSheet({
                           key={s.season_number}
                           className={`season-card${isOpen ? ' is-open' : ''}`}
                         >
-                          <div className="season-head">
-                            <button
-                              type="button"
-                              className="season-toggle"
-                              aria-expanded={isOpen}
-                              onClick={() => toggleSeason(s.season_number)}
-                            >
-                              <span className="season-name">
-                                {label}
-                                <span className="season-caret" aria-hidden>
-                                  {isOpen ? '▴' : '▾'}
+                          <div className="season-header">
+                            <div className="season-head">
+                              <button
+                                type="button"
+                                className="season-toggle"
+                                aria-expanded={isOpen}
+                                onClick={() => toggleSeason(s.season_number)}
+                              >
+                                <span className="season-name">
+                                  {label}
+                                  <span className="season-caret" aria-hidden>
+                                    {isOpen ? '▴' : '▾'}
+                                  </span>
                                 </span>
-                              </span>
-                              <span className="season-count">
-                                {watched}/{total || '–'}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              className={`season-check${complete ? ' done' : ''}`}
-                              aria-label={
-                                complete
-                                  ? `Unmark ${label}`
-                                  : `Mark ${label} watched`
-                              }
-                              disabled={busy || total === 0}
-                              onClick={() =>
-                                onToggleSeason(s.season_number, complete)
-                              }
-                            >
-                              <CheckIcon />
-                            </button>
-                          </div>
-                          <div className="season-progress" aria-hidden>
-                            <div
-                              className={
-                                complete
-                                  ? 'fill full'
-                                  : pct > 0
-                                    ? 'fill partial'
-                                    : 'fill'
-                              }
-                              style={{ width: `${Math.round(pct * 100)}%` }}
-                            />
+                                <span className="season-count">
+                                  {watched}/{total || '–'}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                className={`season-check${complete ? ' done' : ''}`}
+                                aria-label={
+                                  complete
+                                    ? `Unmark ${label}`
+                                    : `Mark ${label} watched`
+                                }
+                                disabled={busy || total === 0}
+                                onClick={() =>
+                                  onToggleSeason(s.season_number, complete)
+                                }
+                              >
+                                <CheckIcon />
+                              </button>
+                            </div>
+                            <div className="season-progress" aria-hidden>
+                              <div
+                                className={
+                                  complete
+                                    ? 'fill full'
+                                    : pct > 0
+                                      ? 'fill partial'
+                                      : 'fill'
+                                }
+                                style={{ width: `${Math.round(pct * 100)}%` }}
+                              />
+                            </div>
                           </div>
 
                           {isOpen && (
