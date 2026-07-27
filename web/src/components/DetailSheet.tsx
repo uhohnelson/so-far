@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { fireConfetti } from '../confetti'
 import {
   getCachedSeason,
   invalidateCachedSeason,
@@ -16,6 +17,27 @@ import type {
 } from '../types'
 import { DetailBodySkeleton, SeasonEpisodesSkeleton } from './Skeletons'
 import PersonSheet from './PersonSheet'
+
+function seasonWatchedCount(keys: string[], seasonNumber: number) {
+  return keys.filter((k) => k.startsWith(`S${seasonNumber}E`)).length
+}
+
+function celebrateIfSeasonCompleted(
+  beforeKeys: string[],
+  afterKeys: string[],
+  seasonNumber: number,
+  episodeCount: number | null | undefined,
+): boolean {
+  const total = episodeCount ?? 0
+  if (total <= 0) return false
+  const before = seasonWatchedCount(beforeKeys, seasonNumber)
+  const after = seasonWatchedCount(afterKeys, seasonNumber)
+  if (before < total && after >= total) {
+    fireConfetti()
+    return true
+  }
+  return false
+}
 
 export type SheetTarget =
   | { kind: 'library'; item: LibraryItem }
@@ -341,9 +363,32 @@ export default function DetailSheet({
       })
       libId = lib.id
     }
+    const beforeKeys = detail?.watched_episodes ?? []
     const res = await api.markEpisode(libId, s, e, markPrevious)
     const refreshed = await refreshDetail(title.tmdb_id, 'tv')
     applyWatchedKeys(refreshed.watched_episodes)
+    const seasonMeta = title.seasons?.find((x) => x.season_number === s)
+    let celebrated = celebrateIfSeasonCompleted(
+      beforeKeys,
+      refreshed.watched_episodes,
+      s,
+      seasonMeta?.episode_count,
+    )
+    if (!celebrated && markPrevious && title.seasons) {
+      for (const season of title.seasons) {
+        if (season.season_number >= s) continue
+        if (
+          celebrateIfSeasonCompleted(
+            beforeKeys,
+            refreshed.watched_episodes,
+            season.season_number,
+            season.episode_count,
+          )
+        ) {
+          break
+        }
+      }
+    }
     invalidateCachedSeason(title.tmdb_id, s)
     if (markPrevious) await reloadSeasonsUpTo(title.tmdb_id, s)
     else await loadSeason(title.tmdb_id, s)
@@ -419,9 +464,19 @@ export default function DetailSheet({
         }
         onMutated(res.item)
       } else {
+        const beforeKeys = detail?.watched_episodes ?? []
         const res = await api.markSeason(lib.id, seasonNumber)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
         applyWatchedKeys(refreshed.watched_episodes)
+        const seasonMeta = title.seasons?.find(
+          (x) => x.season_number === seasonNumber,
+        )
+        celebrateIfSeasonCompleted(
+          beforeKeys,
+          refreshed.watched_episodes,
+          seasonNumber,
+          seasonMeta?.episode_count,
+        )
         invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
           await loadSeason(title.tmdb_id, seasonNumber)
@@ -435,9 +490,24 @@ export default function DetailSheet({
       if (!title) return
       const lib = await ensureLibrary()
       if (!lib) return
+      const beforeKeys = detail?.watched_episodes ?? []
       const res = await api.markAllSeasons(lib.id)
       const refreshed = await refreshDetail(title.tmdb_id, 'tv')
       applyWatchedKeys(refreshed.watched_episodes)
+      let celebrated = false
+      for (const season of title.seasons || []) {
+        const before = seasonWatchedCount(beforeKeys, season.season_number)
+        const total = season.episode_count ?? 0
+        const after = seasonWatchedCount(
+          refreshed.watched_episodes,
+          season.season_number,
+        )
+        if (total > 0 && before < total && after >= total) {
+          celebrated = true
+          break
+        }
+      }
+      if (celebrated) fireConfetti()
       setEpisodesBySeason({})
       if (openSeason != null) await loadSeason(title.tmdb_id, openSeason)
       onMutated(res.item, res.message)

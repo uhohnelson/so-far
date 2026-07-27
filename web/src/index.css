@@ -10,6 +10,7 @@
   --line: #e8e8e8;
   --soft: #f4f4f4;
   --green: #22c55e;
+  --purple: #7c3aed;
   --danger: #e11d48;
   --nav-h: 64px;
   --radius: 14px;
@@ -1555,13 +1556,17 @@ input {
   margin: 0;
   border: 0;
   border-radius: 0;
-  background: #fff1f2;
-  color: var(--danger);
+  background: var(--yellow);
+  color: var(--yellow-ink);
   padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
   font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.sheet-remove-bar:disabled {
+  opacity: 0.7;
 }
 
 .profile-signout-bar {
@@ -1580,8 +1585,8 @@ input {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: #fff1f2;
-  color: var(--danger);
+  background: var(--yellow);
+  color: var(--yellow-ink);
 }
 
 .sheet.has-add-bar .sheet-body,
@@ -1891,18 +1896,18 @@ input {
 }
 
 .season-card {
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 4px;
-  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .season-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 4px 4px 4px;
-  background: #fff;
+  padding: 4px 0;
+  background: transparent;
 }
 
 .season-toggle {
@@ -1982,7 +1987,7 @@ input {
 }
 
 .season-progress .fill.full {
-  background: var(--green);
+  background: var(--purple);
 }
 
 .season-card.is-open .season-progress {
@@ -1990,13 +1995,13 @@ input {
 }
 
 .season-body {
-  padding: 0 4px 8px;
+  padding: 0 0 8px;
   background: transparent;
   border-top: 0;
 }
 
 .season-body .episode-list {
-  gap: 8px;
+  gap: 6px;
 }
 
 .season-body .episode-row {
@@ -2006,9 +2011,9 @@ input {
   align-items: center;
   padding: 0;
   height: 96px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
   color: #111;
   overflow: hidden;
 }
