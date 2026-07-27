@@ -16,6 +16,43 @@ function label(item: GridItem): string {
   return item.title
 }
 
+function mediaTypeOf(item: GridItem): 'movie' | 'tv' {
+  if (isLibraryItem(item)) return item.title.media_type
+  return item.media_type
+}
+
+function totalEps(item: LibraryItem): number | null {
+  const seasons = item.title.seasons
+  if (!seasons) return null
+  let total = 0
+  for (const s of seasons) {
+    if (s.season_number >= 1) total += s.episode_count ?? 0
+  }
+  return total || null
+}
+
+function remainingEps(item: LibraryItem): number | null {
+  const seasons = item.title.seasons
+  if (!seasons || !item.current_season || !item.current_episode) return null
+  let left = 0
+  for (const s of seasons) {
+    const count = s.episode_count ?? 0
+    if (s.season_number > item.current_season) left += count
+    else if (s.season_number === item.current_season) {
+      left += Math.max(0, count - item.current_episode)
+    }
+  }
+  return left
+}
+
+function progressOf(item: LibraryItem): number {
+  if (item.title.media_type !== 'tv') return 0
+  const total = totalEps(item)
+  const rem = remainingEps(item)
+  if (!total || rem === null) return 0
+  return Math.min(1, Math.max(0, (total - rem - 1) / total))
+}
+
 interface PosterGridSheetProps {
   title: string
   items: GridItem[]
@@ -45,6 +82,8 @@ export default function PosterGridSheet({
               const key = isLibraryItem(item)
                 ? `lib-${item.id}`
                 : `${item.media_type}-${item.tmdb_id}`
+              const showProgress =
+                isLibraryItem(item) && mediaTypeOf(item) === 'tv'
               return (
                 <button
                   key={key}
@@ -56,6 +95,16 @@ export default function PosterGridSheet({
                     <img src={posterUrl(item)!} alt={label(item)} loading="lazy" />
                   ) : (
                     <div className="grid-ph">{label(item)}</div>
+                  )}
+                  {showProgress && (
+                    <div className="grid-progress">
+                      <div
+                        className="grid-progress-fill"
+                        style={{
+                          width: `${Math.round(progressOf(item) * 100)}%`,
+                        }}
+                      />
+                    </div>
                   )}
                 </button>
               )

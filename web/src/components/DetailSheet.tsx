@@ -509,6 +509,7 @@ export default function DetailSheet({
       >
         {title ? (
           <>
+            <div className="sheet-scroll">
             <div
               className="hero"
               style={hero ? { backgroundImage: `url(${hero})` } : undefined}
@@ -822,8 +823,11 @@ export default function DetailSheet({
                 </div>
               )}
             </div>
+              </>
+            )}
+            </div>
 
-            {!item && (
+            {!(hydrating && !title.seasons && title.media_type === 'tv') && !item && (
               <button
                 type="button"
                 className="sheet-add-bar"
@@ -833,7 +837,7 @@ export default function DetailSheet({
                 + Add {title.media_type === 'movie' ? 'movie' : 'show'}
               </button>
             )}
-            {item && (
+            {!(hydrating && !title.seasons && title.media_type === 'tv') && item && (
               <button
                 type="button"
                 className="sheet-remove-bar"
@@ -842,8 +846,6 @@ export default function DetailSheet({
               >
                 Remove from list
               </button>
-            )}
-              </>
             )}
           </>
         ) : (

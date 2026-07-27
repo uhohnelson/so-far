@@ -1380,6 +1380,20 @@ input {
   animation: rise 0.22s ease;
 }
 
+.sheet.has-add-bar,
+.sheet.has-action-bar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sheet-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 @keyframes rise {
   from {
     transform: translateY(24px);
@@ -1517,11 +1531,7 @@ input {
 }
 
 .sheet-add-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 6;
+  flex-shrink: 0;
   width: 100%;
   margin: 0;
   border: 0;
@@ -1540,11 +1550,7 @@ input {
 }
 
 .sheet-remove-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 6;
+  flex-shrink: 0;
   width: 100%;
   margin: 0;
   border: 0;
@@ -1580,7 +1586,7 @@ input {
 
 .sheet.has-add-bar .sheet-body,
 .sheet.has-action-bar .sheet-body {
-  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 24px;
 }
 
 .profile-page {
@@ -1739,7 +1745,7 @@ input {
 .cast-grid .cast-card img,
 .cast-grid .cast-ph {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 2 / 3;
   height: auto;
   border-radius: 4px;
   object-fit: cover;
@@ -1766,7 +1772,8 @@ input {
 .cast-card img,
 .cast-ph {
   width: 88px;
-  height: 88px;
+  height: auto;
+  aspect-ratio: 2 / 3;
   border-radius: 4px;
   object-fit: cover;
   background: var(--soft);
@@ -2322,7 +2329,7 @@ input {
 .person-hero img,
 .person-ph {
   width: 96px;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 2 / 3;
   border-radius: 4px;
   object-fit: cover;
   background: var(--soft);
