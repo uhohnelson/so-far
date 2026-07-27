@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
@@ -1105,6 +1106,22 @@ async def remove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await _send_library(update, context, status=None, via_callback=False)
 
 
+async def _alert_loop(application: Application) -> None:
+    """Background poll when PTB JobQueue is unavailable (no extra install)."""
+    from bot.alerts_runner import run_episode_alerts
+
+    settings = get_settings()
+    interval = max(300, settings.alert_check_interval_sec)
+    await asyncio.sleep(120)
+    while True:
+        try:
+            tmdb: TmdbClient = application.bot_data["tmdb"]
+            await run_episode_alerts(application.bot, tmdb)
+        except Exception:
+            logger.exception("Episode alert loop failed")
+        await asyncio.sleep(interval)
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
     logger.info("Bot commands registered with Telegram")
@@ -1121,6 +1138,12 @@ async def post_init(application: Application) -> None:
     if application.job_queue:
         application.job_queue.run_repeating(alert_job, interval=interval, first=120)
         logger.info("Episode alert job scheduled every %s seconds", interval)
+    else:
+        asyncio.create_task(_alert_loop(application))
+        logger.info(
+            "Episode alert asyncio loop started (every %s seconds, first in 120s)",
+            interval,
+        )
 
 
 def build_application() -> Application:
