@@ -143,3 +143,11 @@ class StatsOut(BaseModel):
     episodes: int
     movies: int
     minutes: int
+
+
+class PersonOut(BaseModel):
+    id: int
+    name: str
+    biography: str | None = None
+    profile_url: str | None = None
+    known_for: str | None = None

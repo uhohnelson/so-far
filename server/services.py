@@ -219,6 +219,13 @@ def add_or_update_library(
     row = db.scalar(
         select(UserTitle).where(UserTitle.user_id == user.id, UserTitle.title_id == title.id)
     )
+    # New movies should not land as watched from a plain add — only via mark_watched.
+    if (
+        row is None
+        and title.media_type == MediaType.movie
+        and status == WatchStatus.watched
+    ):
+        status = WatchStatus.watching
     if status == WatchStatus.watching and title.media_type == MediaType.tv:
         current_season = current_season or 1
         current_episode = current_episode or 1

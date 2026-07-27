@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { MediaType, SearchResult } from '../types'
+import PosterGridSheet from './PosterGridSheet'
 import { SearchSkeleton, ShelfSkeleton } from './Skeletons'
 
 interface DiscoverProps {
@@ -10,6 +11,11 @@ interface DiscoverProps {
 }
 
 type DiscoverFilter = 'all' | MediaType
+
+type GridView = {
+  title: string
+  items: SearchResult[]
+}
 
 function PosterCard({
   item,
@@ -84,6 +90,7 @@ export default function Discover({
   const [topMovies, setTopMovies] = useState<SearchResult[] | null>(null)
   const [trendingTv, setTrendingTv] = useState<SearchResult[] | null>(null)
   const [topTv, setTopTv] = useState<SearchResult[] | null>(null)
+  const [gridView, setGridView] = useState<GridView | null>(null)
   const [loading, setLoading] = useState(false)
   const debounce = useRef<number | undefined>(undefined)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -143,17 +150,38 @@ export default function Discover({
   const showMovies = filter === 'all' || filter === 'movie'
   const showTv = filter === 'all' || filter === 'tv'
 
+  const openShelfGrid = async (
+    title: string,
+    items: SearchResult[] | null,
+    loader: () => Promise<SearchResult[]>,
+  ) => {
+    if (items?.length) {
+      setGridView({ title, items })
+      return
+    }
+    try {
+      const loaded = await loader()
+      setGridView({ title, items: loaded })
+    } catch {
+      setGridView({ title, items: [] })
+    }
+  }
+
   const shelf = (
     title: string,
     subtitle: string,
     items: SearchResult[] | null,
     keyPrefix: string,
+    onSeeMore: () => void,
   ) => (
     <section className="discover-shelf">
       <div className="section-label">
         {title}
-        <span className="see-all">{subtitle}</span>
+        <button type="button" className="see-all" onClick={onSeeMore}>
+          See more
+        </button>
       </div>
+      <div className="section-sub">{subtitle}</div>
       {items === null ? (
         <div aria-label={`Loading ${title}`}>
           <ShelfSkeleton />
@@ -162,7 +190,7 @@ export default function Discover({
         <div className="shelf-empty">Nothing available right now.</div>
       ) : (
         <div className="poster-row">
-          {items.map((r) => (
+          {items.slice(0, 12).map((r) => (
             <PosterCard
               key={`${keyPrefix}-${r.media_type}-${r.tmdb_id}`}
               item={r}
@@ -237,11 +265,37 @@ export default function Discover({
       ) : (
         <>
           {showMovies &&
-            shelf('Trending movies', 'THIS WEEK', trendingMovies, 'tm')}
-          {showMovies && shelf('Top movies', 'TOP RATED', topMovies, 'topm')}
+            shelf(
+              'Trending movies',
+              'THIS WEEK',
+              trendingMovies,
+              'tm',
+              () =>
+                openShelfGrid('Trending movies', trendingMovies, () =>
+                  api.trending('movie'),
+                ),
+            )}
+          {showMovies &&
+            shelf('Top movies', 'TOP RATED', topMovies, 'topm', () =>
+              openShelfGrid('Top movies', topMovies, () =>
+                api.topRated('movie'),
+              ),
+            )}
           {showTv &&
-            shelf('Trending TV shows', 'THIS WEEK', trendingTv, 'ttv')}
-          {showTv && shelf('Top TV shows', 'TOP RATED', topTv, 'toptv')}
+            shelf(
+              'Trending TV shows',
+              'THIS WEEK',
+              trendingTv,
+              'ttv',
+              () =>
+                openShelfGrid('Trending TV shows', trendingTv, () =>
+                  api.trending('tv'),
+                ),
+            )}
+          {showTv &&
+            shelf('Top TV shows', 'TOP RATED', topTv, 'toptv', () =>
+              openShelfGrid('Top TV shows', topTv, () => api.topRated('tv')),
+            )}
 
           <button
             className="browse-cta"
@@ -250,6 +304,18 @@ export default function Discover({
             Search movies and TV shows ›
           </button>
         </>
+      )}
+
+      {gridView && (
+        <PosterGridSheet
+          title={gridView.title}
+          items={gridView.items}
+          onClose={() => setGridView(null)}
+          onOpen={(item) => {
+            setGridView(null)
+            onOpen(item as SearchResult)
+          }}
+        />
       )}
     </div>
   )

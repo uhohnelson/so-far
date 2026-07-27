@@ -93,6 +93,28 @@ class FakeTmdb:
     def poster_url(self, poster_path, size="w500"):
         return f"https://image.tmdb.org/t/p/{size}{poster_path}" if poster_path else None
 
+    def get_person(self, person_id):
+        return {
+            "id": person_id,
+            "name": "Bryan Cranston",
+            "biography": "Actor.",
+            "profile_path": "/bc.jpg",
+            "known_for_department": "Acting",
+        }
+
+    def get_person_credits(self, person_id):
+        return [
+            SearchResult(
+                tmdb_id=1396,
+                media_type="tv",
+                title="Breaking Bad",
+                year=2008,
+                overview="A teacher turns to crime.",
+                poster_path="/bb.jpg",
+                backdrop_path="/bb-bd.jpg",
+            )
+        ]
+
     def close(self):
         pass
 
@@ -360,3 +382,33 @@ def test_add_progress_and_remove_flow(client):
     assert res.json()["item"]["current_episode"] == 5
 
     assert client.delete(f"/api/library/{item_id}", headers=_auth(token)).status_code == 200
+
+
+def test_movie_add_does_not_default_to_watched(client):
+    token = _login(client)
+    res = client.post(
+        "/api/library",
+        headers=_auth(token),
+        json={"tmdb_id": 550, "media_type": "movie", "status": "want"},
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "want"
+
+    watched_add = client.post(
+        "/api/library",
+        headers=_auth(token),
+        json={"tmdb_id": 551, "media_type": "movie", "status": "watched"},
+    )
+    assert watched_add.status_code == 200
+    assert watched_add.json()["status"] == "watching"
+
+
+def test_person_detail_and_credits(client):
+    token = _login(client)
+    person = client.get("/api/person/1", headers=_auth(token))
+    assert person.status_code == 200
+    assert person.json()["name"] == "Bryan Cranston"
+
+    credits = client.get("/api/person/1/credits", headers=_auth(token))
+    assert credits.status_code == 200
+    assert credits.json()[0]["title"] == "Breaking Bad"

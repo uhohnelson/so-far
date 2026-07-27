@@ -25,6 +25,12 @@ export function setCachedSeason(
   cache.set(key(tmdbId, season), episodes)
 }
 
+export function invalidateCachedSeason(tmdbId: number, season: number) {
+  const k = key(tmdbId, season)
+  cache.delete(k)
+  inflight.delete(k)
+}
+
 /** Run async work with a hard concurrency cap. */
 export async function mapLimit<T, R>(
   items: T[],

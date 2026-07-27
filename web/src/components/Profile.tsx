@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { LibraryItem, Stats, User } from '../types'
+import PosterGridSheet from './PosterGridSheet'
 
 interface ProfileProps {
   items: LibraryItem[] | null
@@ -31,6 +32,8 @@ export default function Profile({
 }: ProfileProps) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [pickingCover, setPickingCover] = useState(false)
+  const [gridTitle, setGridTitle] = useState<string | null>(null)
+  const [gridItems, setGridItems] = useState<LibraryItem[] | null>(null)
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => setStats(null))
@@ -44,7 +47,6 @@ export default function Profile({
     const withArt = list.filter(
       (i) => i.title.backdrop_url || i.title.poster_url,
     )
-    // Prefer titles with backdrops; keep unique by title id.
     const seen = new Set<number>()
     const out: LibraryItem[] = []
     for (const item of withArt) {
@@ -69,6 +71,11 @@ export default function Profile({
     coverCandidates[0]?.title.backdrop_url ||
     coverCandidates[0]?.title.poster_url ||
     null
+
+  const openGrid = (title: string, shelf: LibraryItem[]) => {
+    setGridTitle(title)
+    setGridItems(shelf)
+  }
 
   return (
     <div className="profile-page">
@@ -141,7 +148,18 @@ export default function Profile({
 
         {shows.length > 0 && (
           <section className="profile-shelf">
-            <div className="section-label">Shows</div>
+            <div className="section-label">
+              Shows
+              {shows.length > 8 && (
+                <button
+                  type="button"
+                  className="see-all"
+                  onClick={() => openGrid('Shows', shows)}
+                >
+                  See more
+                </button>
+              )}
+            </div>
             <div className="poster-row">
               {shows.slice(0, 16).map((item) => (
                 <button
@@ -167,7 +185,18 @@ export default function Profile({
 
         {movies.length > 0 && (
           <section className="profile-shelf">
-            <div className="section-label">Movies</div>
+            <div className="section-label">
+              Movies
+              {movies.length > 8 && (
+                <button
+                  type="button"
+                  className="see-all"
+                  onClick={() => openGrid('Movies', movies)}
+                >
+                  See more
+                </button>
+              )}
+            </div>
             <div className="poster-row">
               {movies.slice(0, 16).map((item) => (
                 <button
@@ -190,13 +219,29 @@ export default function Profile({
             </div>
           </section>
         )}
-
-        <div className="profile-actions">
-          <button className="danger" onClick={onLogout}>
-            Sign out
-          </button>
-        </div>
       </div>
+
+      <button type="button" className="profile-signout-bar" onClick={onLogout}>
+        Sign out
+      </button>
+
+      {gridTitle && gridItems && (
+        <PosterGridSheet
+          title={gridTitle}
+          items={gridItems}
+          onClose={() => {
+            setGridTitle(null)
+            setGridItems(null)
+          }}
+          onOpen={(item) => {
+            if ('title' in item && typeof item.title === 'object' && 'status' in item) {
+              setGridTitle(null)
+              setGridItems(null)
+              onOpen(item as LibraryItem)
+            }
+          }}
+        />
+      )}
 
       {pickingCover && (
         <>

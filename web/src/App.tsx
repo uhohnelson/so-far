@@ -133,7 +133,7 @@ export default function App() {
       const added = await api.addToLibrary({
         tmdb_id: result.tmdb_id,
         media_type: result.media_type,
-        status: result.media_type === 'tv' ? 'watching' : 'want',
+        status: result.media_type === 'tv' ? 'watching' : 'watching',
       })
       patchItem(added)
       showToast(`Added ${result.title}`)
@@ -263,6 +263,7 @@ export default function App() {
             onClose={() => setSheet(null)}
             onMutated={handleMutated}
             onError={showToast}
+            onOpenSearch={openSearchResult}
           />
         )}
 

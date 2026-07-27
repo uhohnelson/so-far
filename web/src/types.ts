@@ -92,3 +92,11 @@ export interface Stats {
   movies: number
   minutes: number
 }
+
+export interface Person {
+  id: number
+  name: string
+  biography: string | null
+  profile_url: string | null
+  known_for: string | null
+}

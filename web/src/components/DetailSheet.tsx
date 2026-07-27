@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import {
   getCachedSeason,
+  invalidateCachedSeason,
   loadSeasonEpisodes,
   setCachedSeason,
 } from '../seasonCache'
@@ -14,6 +15,7 @@ import type {
   TitleDetail,
 } from '../types'
 import { DetailBodySkeleton, SeasonEpisodesSkeleton } from './Skeletons'
+import PersonSheet from './PersonSheet'
 
 export type SheetTarget =
   | { kind: 'library'; item: LibraryItem }
@@ -24,6 +26,7 @@ interface DetailSheetProps {
   onClose: () => void
   onMutated: (updated: LibraryItem | null, message?: string) => void
   onError: (message: string) => void
+  onOpenSearch?: (result: SearchResult) => void
 }
 
 function emptyTitle(partial: Partial<Title> & Pick<Title, 'tmdb_id' | 'media_type' | 'title'>): Title {
@@ -79,6 +82,7 @@ export default function DetailSheet({
   onClose,
   onMutated,
   onError,
+  onOpenSearch,
 }: DetailSheetProps) {
   const seedType: MediaType =
     target.kind === 'library'
@@ -104,6 +108,8 @@ export default function DetailSheet({
     episode: number
     previous: number
   } | null>(null)
+  const [personId, setPersonId] = useState<number | null>(null)
+  const [personName, setPersonName] = useState('')
 
   const loadSeason = async (tmdbId: number, seasonNumber: number) => {
     const cached = getCachedSeason(tmdbId, seasonNumber)
@@ -179,6 +185,43 @@ export default function DetailSheet({
   const title: Title | null = detail?.title ?? null
   const item = detail?.library_item ?? null
   const watchedKeys = detail?.watched_episodes ?? []
+
+  const episodeKey = (season: number, episode: number) =>
+    `S${season}E${episode}`
+
+  const isEpisodeWatched = (season: number, episode: number) =>
+    watchedKeys.includes(episodeKey(season, episode))
+
+  const patchSeasonWatched = (
+    seasonNumber: number,
+    patch: (ep: Episode) => Episode,
+  ) => {
+    setEpisodesBySeason((prev) => {
+      const cached = prev[seasonNumber]
+      if (!cached || cached === 'loading') return prev
+      const next = cached.map(patch)
+      if (title) setCachedSeason(title.tmdb_id, seasonNumber, next)
+      return { ...prev, [seasonNumber]: next }
+    })
+  }
+
+  const applyWatchedKeys = (keys: string[]) => {
+    setDetail((prev) =>
+      prev ? { ...prev, watched_episodes: keys } : prev,
+    )
+    if (!title) return
+    const seasons = new Set<number>()
+    for (const k of keys) {
+      const m = /^S(\d+)E(\d+)$/.exec(k)
+      if (m) seasons.add(Number(m[1]))
+    }
+    for (const seasonNumber of seasons) {
+      patchSeasonWatched(seasonNumber, (ep) => ({
+        ...ep,
+        watched: keys.includes(episodeKey(ep.season, ep.episode)),
+      }))
+    }
+  }
   const hero = title?.backdrop_url || title?.poster_url
 
   const seasonProgress = (seasonNumber: number, episodeCount: number | null) => {
@@ -232,7 +275,12 @@ export default function DetailSheet({
   const add = () =>
     run(async () => {
       if (!title) return
-      const status = title.media_type === 'tv' ? 'watching' : 'want'
+      const status =
+        title.media_type === 'tv'
+          ? 'watching'
+          : daysUntil(title.release_date) != null
+            ? 'want'
+            : 'watching'
       const updated = await api.addToLibrary({
         tmdb_id: title.tmdb_id,
         media_type: title.media_type,
@@ -294,7 +342,9 @@ export default function DetailSheet({
       libId = lib.id
     }
     const res = await api.markEpisode(libId, s, e, markPrevious)
-    await refreshDetail(title.tmdb_id, 'tv')
+    const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+    applyWatchedKeys(refreshed.watched_episodes)
+    invalidateCachedSeason(title.tmdb_id, s)
     if (markPrevious) await reloadSeasonsUpTo(title.tmdb_id, s)
     else await loadSeason(title.tmdb_id, s)
     onMutated(res.item, res.message)
@@ -306,11 +356,13 @@ export default function DetailSheet({
 
   const onToggleEpisode = async (ep: Episode) => {
     if (!title || busy) return
-    if (ep.watched) {
+    if (isEpisodeWatched(ep.season, ep.episode)) {
       if (!item) return
       await run(async () => {
         const res = await api.unmarkEpisode(item.id, ep.season, ep.episode)
-        await refreshDetail(title.tmdb_id, 'tv')
+        const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+        applyWatchedKeys(refreshed.watched_episodes)
+        invalidateCachedSeason(title.tmdb_id, ep.season)
         await loadSeason(title.tmdb_id, ep.season)
         onMutated(res.item)
       })
@@ -359,14 +411,18 @@ export default function DetailSheet({
       if (!lib) return
       if (complete) {
         const res = await api.unmarkSeason(lib.id, seasonNumber)
-        await refreshDetail(title.tmdb_id, 'tv')
+        const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+        applyWatchedKeys(refreshed.watched_episodes)
+        invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
           await loadSeason(title.tmdb_id, seasonNumber)
         }
         onMutated(res.item)
       } else {
         const res = await api.markSeason(lib.id, seasonNumber)
-        await refreshDetail(title.tmdb_id, 'tv')
+        const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+        applyWatchedKeys(refreshed.watched_episodes)
+        invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
           await loadSeason(title.tmdb_id, seasonNumber)
         }
@@ -380,7 +436,8 @@ export default function DetailSheet({
       const lib = await ensureLibrary()
       if (!lib) return
       const res = await api.markAllSeasons(lib.id)
-      await refreshDetail(title.tmdb_id, 'tv')
+      const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+      applyWatchedKeys(refreshed.watched_episodes)
       setEpisodesBySeason({})
       if (openSeason != null) await loadSeason(title.tmdb_id, openSeason)
       onMutated(res.item, res.message)
@@ -446,7 +503,7 @@ export default function DetailSheet({
     <>
       <div className="sheet-backdrop" onClick={onClose} />
       <div
-        className={`sheet${!item && title ? ' has-add-bar' : ''}`}
+        className={`sheet${!item && title ? ' has-add-bar' : ''}${item ? ' has-action-bar' : ''}`}
         role="dialog"
         aria-label={title?.title || 'Title'}
       >
@@ -539,20 +596,6 @@ export default function DetailSheet({
 
               {tab === 'about' && (
                 <>
-                  {title.providers.length > 0 && (
-                    <>
-                      <h3>Where to watch</h3>
-                      <div className="provider-row">
-                        {title.providers.map((p) => (
-                          <span key={p.name} className="provider-pill">
-                            {p.logo_url && <img src={p.logo_url} alt="" />}
-                            {p.name}
-                          </span>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
                   <h3>{title.media_type === 'movie' ? 'Movie info' : 'Show info'}</h3>
                   {title.vote_average != null && title.vote_average > 0 && (
                     <div className="rating-row">
@@ -590,9 +633,17 @@ export default function DetailSheet({
                   {title.cast.length > 0 && (
                     <>
                       <h3>Cast</h3>
-                      <div className="cast-row">
+                      <div className="cast-grid">
                         {title.cast.map((c) => (
-                          <div key={c.id} className="cast-card">
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="cast-card"
+                            onClick={() => {
+                              setPersonId(c.id)
+                              setPersonName(c.name)
+                            }}
+                          >
                             {c.profile_url ? (
                               <img src={c.profile_url} alt="" />
                             ) : (
@@ -602,19 +653,10 @@ export default function DetailSheet({
                             {c.character && (
                               <div className="cast-role">{c.character}</div>
                             )}
-                          </div>
+                          </button>
                         ))}
                       </div>
                     </>
-                  )}
-                  {item && (
-                    <button
-                      className="danger-btn"
-                      onClick={remove}
-                      disabled={busy}
-                    >
-                      Remove from list
-                    </button>
                   )}
                 </>
               )}
@@ -714,6 +756,10 @@ export default function DetailSheet({
                                   {cached.map((ep) => {
                                     const days = daysUntil(ep.air_date)
                                     const upcoming = days != null && days > 0
+                                    const watched = isEpisodeWatched(
+                                      ep.season,
+                                      ep.episode,
+                                    )
                                     return (
                                       <div
                                         key={`${ep.season}-${ep.episode}`}
@@ -750,9 +796,9 @@ export default function DetailSheet({
                                         ) : (
                                           <button
                                             type="button"
-                                            className={`season-check${ep.watched ? ' done' : ''}`}
+                                            className={`season-check${watched ? ' done' : ''}`}
                                             aria-label={
-                                              ep.watched
+                                              watched
                                                 ? `Unmark episode ${ep.episode}`
                                                 : `Mark episode ${ep.episode} watched`
                                             }
@@ -785,6 +831,16 @@ export default function DetailSheet({
                 disabled={busy || hydrating}
               >
                 + Add {title.media_type === 'movie' ? 'movie' : 'show'}
+              </button>
+            )}
+            {item && (
+              <button
+                type="button"
+                className="sheet-remove-bar"
+                onClick={remove}
+                disabled={busy}
+              >
+                Remove from list
               </button>
             )}
               </>
@@ -830,6 +886,17 @@ export default function DetailSheet({
             </button>
           </div>
         </div>
+      )}
+      {personId != null && (
+        <PersonSheet
+          personId={personId}
+          name={personName}
+          onClose={() => setPersonId(null)}
+          onOpenCredit={(result) => {
+            setPersonId(null)
+            onOpenSearch?.(result)
+          }}
+        />
       )}
     </>
   )

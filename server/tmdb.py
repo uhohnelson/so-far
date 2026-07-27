@@ -364,3 +364,27 @@ class TmdbClient:
         if not poster_path:
             return None
         return f"https://image.tmdb.org/t/p/{size}{poster_path}"
+
+    def get_person(self, person_id: int) -> dict:
+        return self._get(f"/person/{person_id}")
+
+    def get_person_credits(self, person_id: int) -> list[SearchResult]:
+        cache_key = ("person_credits", person_id)
+        cached = self._list_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        data = self._get(f"/person/{person_id}/combined_credits")
+        results: list[SearchResult] = []
+        for item in data.get("cast") or []:
+            mt = item.get("media_type")
+            if mt not in {"movie", "tv"}:
+                continue
+            parsed = self._parse_result(item, media_type=mt)
+            if parsed:
+                results.append(parsed)
+        results.sort(
+            key=lambda r: r.year or 0,
+            reverse=True,
+        )
+        self._list_cache_set(cache_key, results)
+        return results

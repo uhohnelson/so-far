@@ -402,6 +402,16 @@ input {
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--muted);
+  text-transform: uppercase;
+}
+
+.section-sub {
+  margin: -6px 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 /* ---- Episode / watch cards ---- */
@@ -1355,6 +1365,10 @@ input {
   background: rgba(0, 0, 0, 0.45);
 }
 
+.sheet-backdrop-high {
+  z-index: 34;
+}
+
 .sheet {
   position: fixed;
   inset: 0;
@@ -1525,8 +1539,52 @@ input {
   opacity: 0.7;
 }
 
-.sheet.has-add-bar .sheet-body {
+.sheet-remove-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff1f2;
+  color: var(--danger);
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-signout-bar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  z-index: 12;
+  width: 100%;
+  max-width: 480px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 18px 16px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #fff1f2;
+  color: var(--danger);
+}
+
+.sheet.has-add-bar .sheet-body,
+.sheet.has-action-bar .sheet-body {
   padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+
+.profile-page {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ---- Detail facts / providers / rating / trailer ---- */
@@ -1665,6 +1723,29 @@ input {
   border: 1px solid var(--line);
 }
 
+.cast-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cast-grid .cast-card {
+  width: 100%;
+  text-align: left;
+  padding: 0;
+}
+
+.cast-grid .cast-card img,
+.cast-grid .cast-ph {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--soft);
+}
+
 .cast-row {
   display: flex;
   gap: 12px;
@@ -1686,7 +1767,7 @@ input {
 .cast-ph {
   width: 88px;
   height: 88px;
-  border-radius: 50%;
+  border-radius: 4px;
   object-fit: cover;
   background: var(--soft);
 }
@@ -1902,13 +1983,13 @@ input {
 }
 
 .season-body {
-  padding: 8px;
-  background: #f7f7f7;
-  border-top: 1px solid #ececec;
+  padding: 0 4px 8px;
+  background: transparent;
+  border-top: 0;
 }
 
 .season-body .episode-list {
-  gap: 6px;
+  gap: 8px;
 }
 
 .season-body .episode-row {
@@ -1918,9 +1999,9 @@ input {
   align-items: center;
   padding: 0;
   height: 96px;
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: #111;
   overflow: hidden;
 }
@@ -2221,6 +2302,87 @@ input {
   background: #fff1f2;
   font-weight: 700;
   font-size: 14px;
+}
+
+/* ---- Person / grid sheets ---- */
+
+.person-sheet .person-head {
+  padding: 12px 16px 0;
+}
+
+.person-hero {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 14px;
+  align-items: end;
+  margin-top: 12px;
+  padding-bottom: 12px;
+}
+
+.person-hero img,
+.person-ph {
+  width: 96px;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--soft);
+}
+
+.person-ph {
+  display: grid;
+  place-items: center;
+  font-size: 36px;
+  font-weight: 800;
+  color: #aaa;
+}
+
+.person-hero h2 {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.person-known {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.person-bio {
+  margin-bottom: 16px;
+}
+
+.person-grid {
+  margin-top: 8px;
+}
+
+.grid-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper);
+}
+
+.grid-sheet-head h2 {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.icon-btn.dark {
+  background: var(--soft);
+  color: var(--ink);
+}
+
+.person-sheet,
+.grid-sheet {
+  z-index: 35;
 }
 
 /* ---- Bottom nav ---- */

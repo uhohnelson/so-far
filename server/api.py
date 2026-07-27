@@ -25,6 +25,7 @@ from server.schemas import (
     ExchangeCodeIn,
     LibraryItemOut,
     MarkEpisodeIn,
+    PersonOut,
     ProgressIn,
     ProviderOut,
     SearchResultOut,
@@ -349,6 +350,28 @@ def create_app() -> FastAPI:
             _search_out(r)
             for r in tmdb.top_rated(media_type=media_type, limit=limit)
         ]
+
+    @app.get("/api/person/{person_id}", response_model=PersonOut)
+    def person_detail(
+        person_id: int,
+        user: User = Depends(current_user),
+    ) -> PersonOut:
+        data = tmdb.get_person(person_id)
+        known = data.get("known_for_department")
+        return PersonOut(
+            id=data["id"],
+            name=data.get("name") or "Unknown",
+            biography=data.get("biography") or None,
+            profile_url=tmdb.poster_url(data.get("profile_path"), size="w342"),
+            known_for=known,
+        )
+
+    @app.get("/api/person/{person_id}/credits", response_model=list[SearchResultOut])
+    def person_credits(
+        person_id: int,
+        user: User = Depends(current_user),
+    ) -> list[SearchResultOut]:
+        return [_search_out(r) for r in tmdb.get_person_credits(person_id)]
 
     @app.get("/api/titles/{media_type}/{tmdb_id}", response_model=TitleDetailOut)
     def title_detail(

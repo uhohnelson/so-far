@@ -2,6 +2,7 @@ import type {
   Episode,
   LibraryItem,
   MediaType,
+  Person,
   SearchResult,
   Stats,
   TitleDetail,
@@ -87,13 +88,21 @@ export const api = {
       }`,
     ),
 
-  trending: (mediaType?: MediaType) =>
+  trending: (mediaType?: MediaType, limit = 20) =>
     request<SearchResult[]>(
-      `/trending${mediaType ? `?media_type=${mediaType}` : ''}`,
+      `/trending?limit=${limit}${mediaType ? `&media_type=${mediaType}` : ''}`,
     ),
 
-  topRated: (mediaType: MediaType) =>
-    request<SearchResult[]>(`/top-rated?media_type=${mediaType}`),
+  topRated: (mediaType: MediaType, limit = 20) =>
+    request<SearchResult[]>(
+      `/top-rated?media_type=${mediaType}&limit=${limit}`,
+    ),
+
+  personDetail: (personId: number) =>
+    request<Person>(`/person/${personId}`),
+
+  personCredits: (personId: number) =>
+    request<SearchResult[]>(`/person/${personId}/credits`),
 
   titleDetail: (mediaType: MediaType, tmdbId: number) =>
     request<TitleDetail>(`/titles/${mediaType}/${tmdbId}`),
