@@ -5,6 +5,7 @@ import {
   getCachedSeason,
   invalidateCachedSeason,
   loadSeasonEpisodes,
+  patchCachedWatched,
   setCachedSeason,
 } from '../seasonCache'
 import type {
@@ -15,7 +16,7 @@ import type {
   Title,
   TitleDetail,
 } from '../types'
-import { DetailBodySkeleton, SeasonEpisodesSkeleton } from './Skeletons'
+import { DetailBodySkeleton, SeasonEpisodesSkeleton, ShelfSkeleton } from './Skeletons'
 import PersonSheet from './PersonSheet'
 
 function seasonWatchedCount(keys: string[], seasonNumber: number) {
@@ -145,6 +146,7 @@ export default function DetailSheet({
   } | null>(null)
   const [personId, setPersonId] = useState<number | null>(null)
   const [personName, setPersonName] = useState('')
+  const [similar, setSimilar] = useState<SearchResult[] | null>(null)
 
   const loadSeason = async (tmdbId: number, seasonNumber: number) => {
     const cached = getCachedSeason(tmdbId, seasonNumber)
@@ -172,9 +174,7 @@ export default function DetailSheet({
   }
 
   const refreshDetail = async (tmdbId: number, mediaType: MediaType) => {
-    const refreshed = await api.titleDetail(mediaType, tmdbId)
-    setDetail(refreshed)
-    return refreshed
+    return api.titleDetail(mediaType, tmdbId)
   }
 
   useEffect(() => {
@@ -183,6 +183,7 @@ export default function DetailSheet({
     setHydrating(true)
     setOpenSeason(null)
     setEpisodesBySeason({})
+    setSimilar(null)
     setTab(seedType === 'tv' ? 'episodes' : 'about')
     setConfirm(null)
     ;(async () => {
@@ -204,6 +205,43 @@ export default function DetailSheet({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedType, seedId])
+
+  useEffect(() => {
+    if (target.kind !== 'library') return
+    setDetail((prev) => {
+      if (!prev?.library_item || prev.library_item.id !== target.item.id) {
+        return prev
+      }
+      const cur = prev.library_item
+      const next = target.item
+      if (
+        cur.status === next.status &&
+        cur.current_season === next.current_season &&
+        cur.current_episode === next.current_episode
+      ) {
+        return prev
+      }
+      return { ...prev, library_item: next }
+    })
+  }, [target])
+
+  useEffect(() => {
+    if (tab !== 'about' || similar !== null) return
+    const current = detail?.title
+    if (!current) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const items = await api.similar(current.media_type, current.tmdb_id)
+        if (!cancelled) setSimilar(items)
+      } catch {
+        if (!cancelled) setSimilar([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tab, detail?.title?.media_type, detail?.title?.tmdb_id, similar])
 
   const toggleSeason = (seasonNumber: number) => {
     if (openSeason === seasonNumber) {
@@ -240,23 +278,31 @@ export default function DetailSheet({
     })
   }
 
-  const applyWatchedKeys = (keys: string[]) => {
+  const applyMutation = (updated: LibraryItem, watched: string[]) => {
     setDetail((prev) =>
-      prev ? { ...prev, watched_episodes: keys } : prev,
+      prev
+        ? {
+            ...prev,
+            library_item: updated,
+            watched_episodes: watched,
+          }
+        : prev,
     )
     if (!title) return
+    patchCachedWatched(title.tmdb_id, watched)
     const seasons = new Set<number>()
-    for (const k of keys) {
+    for (const k of watched) {
       const m = /^S(\d+)E(\d+)$/.exec(k)
       if (m) seasons.add(Number(m[1]))
     }
     for (const seasonNumber of seasons) {
       patchSeasonWatched(seasonNumber, (ep) => ({
         ...ep,
-        watched: keys.includes(episodeKey(ep.season, ep.episode)),
+        watched: watched.includes(episodeKey(ep.season, ep.episode)),
       }))
     }
   }
+
   const hero = title?.backdrop_url || title?.poster_url
 
   const seasonProgress = (seasonNumber: number, episodeCount: number | null) => {
@@ -379,7 +425,7 @@ export default function DetailSheet({
     const beforeKeys = detail?.watched_episodes ?? []
     const res = await api.markEpisode(libId, s, e, markPrevious)
     const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-    applyWatchedKeys(refreshed.watched_episodes)
+    applyMutation(res.item, refreshed.watched_episodes)
     celebrateIfShowCompleted(
       beforeKeys,
       refreshed.watched_episodes,
@@ -402,7 +448,7 @@ export default function DetailSheet({
       await run(async () => {
         const res = await api.unmarkEpisode(item.id, ep.season, ep.episode)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyWatchedKeys(refreshed.watched_episodes)
+        applyMutation(res.item, refreshed.watched_episodes)
         invalidateCachedSeason(title.tmdb_id, ep.season)
         await loadSeason(title.tmdb_id, ep.season)
         onMutated(res.item)
@@ -453,7 +499,7 @@ export default function DetailSheet({
       if (complete) {
         const res = await api.unmarkSeason(lib.id, seasonNumber)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyWatchedKeys(refreshed.watched_episodes)
+        applyMutation(res.item, refreshed.watched_episodes)
         invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
           await loadSeason(title.tmdb_id, seasonNumber)
@@ -463,7 +509,7 @@ export default function DetailSheet({
         const beforeKeys = detail?.watched_episodes ?? []
         const res = await api.markSeason(lib.id, seasonNumber)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyWatchedKeys(refreshed.watched_episodes)
+        applyMutation(res.item, refreshed.watched_episodes)
         celebrateIfShowCompleted(
           beforeKeys,
           refreshed.watched_episodes,
@@ -485,7 +531,7 @@ export default function DetailSheet({
       const beforeKeys = detail?.watched_episodes ?? []
       const res = await api.markAllSeasons(lib.id)
       const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-      applyWatchedKeys(refreshed.watched_episodes)
+      applyMutation(res.item, refreshed.watched_episodes)
       celebrateIfShowCompleted(
         beforeKeys,
         refreshed.watched_episodes,
@@ -711,6 +757,41 @@ export default function DetailSheet({
                         ))}
                       </div>
                     </>
+                  )}
+                  {(similar === null || similar.length > 0) && (
+                    <section className="sheet-shelf">
+                      <div className="section-label">You might like</div>
+                      {similar === null ? (
+                        <ShelfSkeleton count={4} />
+                      ) : (
+                        <div className="poster-row">
+                          {similar.map((r) => (
+                            <div
+                              key={`${r.media_type}-${r.tmdb_id}`}
+                              className="poster-card"
+                            >
+                              <button
+                                type="button"
+                                className="poster-hit"
+                                onClick={() => onOpenSearch?.(r)}
+                              >
+                                {r.poster_url ? (
+                                  <img
+                                    className="art"
+                                    src={r.poster_url}
+                                    alt={r.title}
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="art ph">🎬</div>
+                                )}
+                                <span className="caption">{r.title}</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
                   )}
                 </>
               )}

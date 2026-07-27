@@ -31,6 +31,25 @@ export function invalidateCachedSeason(tmdbId: number, season: number) {
   inflight.delete(k)
 }
 
+function episodeKey(season: number, episode: number) {
+  return `S${season}E${episode}`
+}
+
+/** Patch watched flags on every cached season for a show. */
+export function patchCachedWatched(tmdbId: number, watchedKeys: string[]) {
+  const prefix = `${tmdbId}:`
+  for (const [k, eps] of cache.entries()) {
+    if (!k.startsWith(prefix)) continue
+    cache.set(
+      k,
+      eps.map((ep) => ({
+        ...ep,
+        watched: watchedKeys.includes(episodeKey(ep.season, ep.episode)),
+      })),
+    )
+  }
+}
+
 /** Run async work with a hard concurrency cap. */
 export async function mapLimit<T, R>(
   items: T[],

@@ -46,8 +46,18 @@ export default function App() {
       if (!prev) return [updated]
       const idx = prev.findIndex((i) => i.id === updated.id)
       if (idx === -1) return [updated, ...prev]
+      const existing = prev[idx]
+      const merged: LibraryItem = {
+        ...existing,
+        ...updated,
+        title: {
+          ...existing.title,
+          ...updated.title,
+          seasons: updated.title.seasons ?? existing.title.seasons,
+        },
+      }
       const next = [...prev]
-      next[idx] = updated
+      next[idx] = merged
       return next
     })
   }, [])

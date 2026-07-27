@@ -32,8 +32,15 @@ export default function Profile({
 }: ProfileProps) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [pickingCover, setPickingCover] = useState(false)
-  const [gridTitle, setGridTitle] = useState<string | null>(null)
-  const [gridItems, setGridItems] = useState<LibraryItem[] | null>(null)
+  const [gridFilter, setGridFilter] = useState<'tv' | 'movie' | null>(null)
+
+  const gridItems = useMemo(() => {
+    if (!gridFilter || !items) return null
+    return items.filter((i) => i.title.media_type === gridFilter)
+  }, [gridFilter, items])
+
+  const gridTitle =
+    gridFilter === 'tv' ? 'Shows' : gridFilter === 'movie' ? 'Movies' : null
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => setStats(null))
@@ -72,9 +79,8 @@ export default function Profile({
     coverCandidates[0]?.title.poster_url ||
     null
 
-  const openGrid = (title: string, shelf: LibraryItem[]) => {
-    setGridTitle(title)
-    setGridItems(shelf)
+  const openGrid = (filter: 'tv' | 'movie') => {
+    setGridFilter(filter)
   }
 
   return (
@@ -154,7 +160,7 @@ export default function Profile({
                 <button
                   type="button"
                   className="see-all"
-                  onClick={() => openGrid('Shows', shows)}
+                  onClick={() => openGrid('tv')}
                 >
                   See more
                 </button>
@@ -191,7 +197,7 @@ export default function Profile({
                 <button
                   type="button"
                   className="see-all"
-                  onClick={() => openGrid('Movies', movies)}
+                  onClick={() => openGrid('movie')}
                 >
                   See more
                 </button>
@@ -229,14 +235,10 @@ export default function Profile({
         <PosterGridSheet
           title={gridTitle}
           items={gridItems}
-          onClose={() => {
-            setGridTitle(null)
-            setGridItems(null)
-          }}
+          onClose={() => setGridFilter(null)}
           onOpen={(item) => {
             if ('title' in item && typeof item.title === 'object' && 'status' in item) {
-              setGridTitle(null)
-              setGridItems(null)
+              setGridFilter(null)
               onOpen(item as LibraryItem)
             }
           }}

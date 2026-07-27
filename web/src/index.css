@@ -2013,6 +2013,7 @@ input {
 
 .season-body .episode-list {
   gap: 6px;
+  margin: 0 14px;
 }
 
 .season-body .episode-row {
