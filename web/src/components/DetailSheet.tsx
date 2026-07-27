@@ -765,7 +765,7 @@ export default function DetailSheet({
                   {title.cast.length > 0 && (
                     <>
                       <h3>Cast</h3>
-                      <div className="cast-grid">
+                      <div className="cast-row">
                         {title.cast.map((c) => (
                           <button
                             key={c.id}

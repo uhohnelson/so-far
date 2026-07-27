@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { LibraryItem, Stats, User } from '../types'
 import PosterGridSheet from './PosterGridSheet'
@@ -17,11 +17,73 @@ const TIMEZONE_OPTIONS = [
   { label: 'Central (US)', value: 'America/Chicago' },
   { label: 'Mountain (US)', value: 'America/Denver' },
   { label: 'Pacific (US)', value: 'America/Los_Angeles' },
-  { label: 'London', value: 'Europe/London' },
-  { label: 'Paris', value: 'Europe/Paris' },
-  { label: 'Tokyo', value: 'Asia/Tokyo' },
-  { label: 'Sydney', value: 'Australia/Sydney' },
+  { label: 'London (GMT/BST)', value: 'Europe/London' },
+  { label: 'Paris (CET)', value: 'Europe/Paris' },
+  { label: 'Tokyo (JST)', value: 'Asia/Tokyo' },
+  { label: 'Sydney (AEST)', value: 'Australia/Sydney' },
+  { label: 'Ghana (GMT)', value: 'Africa/Accra' },
 ]
+
+function TimezonePicker({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (timezone: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
+  const selectedLabel = value
+    ? (TIMEZONE_OPTIONS.find((opt) => opt.value === value)?.label ?? value)
+    : null
+
+  return (
+    <div className="tz-picker" ref={rootRef}>
+      <button
+        type="button"
+        id="profile-timezone"
+        className={`tz-picker-trigger${!value ? ' is-placeholder' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span>{selectedLabel ?? 'Pick a timezone'}</span>
+        <span className="tz-picker-caret" aria-hidden>{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <ul className="tz-picker-menu" role="listbox" aria-labelledby="profile-timezone">
+          {TIMEZONE_OPTIONS.map((opt) => (
+            <li key={opt.value}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={value === opt.value}
+                className={value === opt.value ? 'selected' : ''}
+                onClick={() => {
+                  onChange(opt.value)
+                  setOpen(false)
+                }}
+              >
+                {opt.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 function splitMinutes(minutes: number) {
   const months = Math.floor(minutes / (30 * 24 * 60))
@@ -123,17 +185,10 @@ export default function Profile({
       <div className="profile-body">
         <div className="profile-timezone">
           <label htmlFor="profile-timezone">Alert timezone</label>
-          <select
-            id="profile-timezone"
-            value={me?.timezone || 'America/New_York'}
-            onChange={(e) => onTimezoneChange(e.target.value)}
-          >
-            {TIMEZONE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <TimezonePicker
+            value={me?.timezone ?? null}
+            onChange={onTimezoneChange}
+          />
         </div>
 
         <div className="section-label">Stats</div>

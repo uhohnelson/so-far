@@ -61,6 +61,7 @@ COMMON_TIMEZONES = [
     ("Paris", "Europe/Paris"),
     ("Tokyo", "Asia/Tokyo"),
     ("Sydney", "Australia/Sydney"),
+    ("Ghana (GMT)", "Africa/Accra"),
 ]
 
 
