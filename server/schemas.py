@@ -90,6 +90,7 @@ class TitleDetailOut(BaseModel):
     title: TitleOut
     library_item: LibraryItemOut | None = None
     watched_episodes: list[str] = []  # "S1E3" keys
+    alerts_muted: bool | None = None
 
 
 class SeasonEpisodesOut(BaseModel):
@@ -130,12 +131,22 @@ class UserOut(BaseModel):
     display_name: str | None = None
     cover_title_id: int | None = None
     cover_url: str | None = None
+    timezone: str | None = None
 
     model_config = {"from_attributes": True}
 
 
 class UserUpdateIn(BaseModel):
     cover_title_id: int | None = None
+    timezone: str | None = None
+
+
+class AlertPrefIn(BaseModel):
+    muted: bool
+
+
+class AlertPrefOut(BaseModel):
+    muted: bool
 
 
 class AuthOut(BaseModel):

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server import services
+from server.alerts import is_alerts_muted, set_alerts_muted
 from server.config import get_settings
 from server.database import get_db, init_db
 from server.models import Title, User, UserTitle, WatchStatus
@@ -25,6 +26,8 @@ from server.rate_limit import (
 )
 from server.schemas import (
     AddLibraryIn,
+    AlertPrefIn,
+    AlertPrefOut,
     AuthOut,
     CastOut,
     EpisodeOut,
@@ -260,6 +263,7 @@ def create_app() -> FastAPI:
             display_name=user.display_name,
             cover_title_id=user.cover_title_id,
             cover_url=cover_url,
+            timezone=user.timezone,
         )
 
     @app.get("/api/health")
@@ -305,26 +309,30 @@ def create_app() -> FastAPI:
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ) -> UserOut:
-        if "cover_title_id" not in body.model_fields_set:
-            return _user_out(user, db)
-        if body.cover_title_id is None:
-            user.cover_title_id = None
-        else:
-            title = db.get(Title, body.cover_title_id)
-            if title is None:
-                raise HTTPException(status_code=404, detail="Title not found.")
-            owned = db.scalar(
-                select(UserTitle).where(
-                    UserTitle.user_id == user.id,
-                    UserTitle.title_id == title.id,
+        if "cover_title_id" in body.model_fields_set:
+            if body.cover_title_id is None:
+                user.cover_title_id = None
+            else:
+                title = db.get(Title, body.cover_title_id)
+                if title is None:
+                    raise HTTPException(status_code=404, detail="Title not found.")
+                owned = db.scalar(
+                    select(UserTitle).where(
+                        UserTitle.user_id == user.id,
+                        UserTitle.title_id == title.id,
+                    )
                 )
-            )
-            if owned is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Pick a cover from something on your list.",
-                )
-            user.cover_title_id = title.id
+                if owned is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Pick a cover from something on your list.",
+                    )
+                user.cover_title_id = title.id
+        if "timezone" in body.model_fields_set and body.timezone is not None:
+            try:
+                services.set_user_timezone(db, user, body.timezone)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         db.commit()
         db.refresh(user)
         return _user_out(user, db)
@@ -410,15 +418,19 @@ def create_app() -> FastAPI:
         title = services.upsert_title_from_tmdb(db, tmdb, media_type, tmdb_id)
         row = _find_library(db, user, title)
         watched = []
+        alerts_muted = None
         if row:
             watched = [
                 f"S{s}E{e}"
                 for s, e in services.list_watched_episodes(db, user, title.id)
             ]
+            if row.status == WatchStatus.watching and title.media_type.value == "tv":
+                alerts_muted = is_alerts_muted(db, user.id, title.id)
         return TitleDetailOut(
             title=_title_out(title),
             library_item=_library_out(row) if row else None,
             watched_episodes=watched,
+            alerts_muted=alerts_muted,
         )
 
     @app.get(
@@ -499,6 +511,24 @@ def create_app() -> FastAPI:
         row = services.get_library_row(db, user, row.id)
         assert row is not None
         return _library_out(row)
+
+    @app.patch("/api/library/{user_title_id}/alerts", response_model=AlertPrefOut)
+    def update_alert_pref(
+        user_title_id: int,
+        body: AlertPrefIn,
+        user: User = Depends(current_user),
+        db: Session = Depends(get_db),
+    ) -> AlertPrefOut:
+        row = services.get_library_row(db, user, user_title_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Not in library")
+        if row.title.media_type.value != "tv" or row.status != WatchStatus.watching:
+            raise HTTPException(
+                status_code=400,
+                detail="Alerts apply to shows you are watching.",
+            )
+        set_alerts_muted(db, user, row.title_id, body.muted)
+        return AlertPrefOut(muted=body.muted)
 
     @app.patch("/api/library/{user_title_id}", response_model=LibraryItemOut)
     def update_library_status(

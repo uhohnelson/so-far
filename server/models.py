@@ -147,3 +147,38 @@ class WatchEvent(Base):
     watched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AlertPref(Base):
+    """Per-user, per-show episode alert mute preference."""
+
+    __tablename__ = "alert_prefs"
+    __table_args__ = (UniqueConstraint("user_id", "title_id", name="uq_alert_pref"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title_id: Mapped[int] = mapped_column(ForeignKey("titles.id", ondelete="CASCADE"), nullable=False)
+    muted: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+    user: Mapped[User] = relationship()
+    title: Mapped[Title] = relationship()
+
+
+class AlertSent(Base):
+    """Tracks episode alerts already delivered (dedup)."""
+
+    __tablename__ = "alerts_sent"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "title_id", "season", "episode", name="uq_alert_sent"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title_id: Mapped[int] = mapped_column(ForeignKey("titles.id", ondelete="CASCADE"), nullable=False)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    episode: Mapped[int] = mapped_column(Integer, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

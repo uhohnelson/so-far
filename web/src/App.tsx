@@ -175,6 +175,16 @@ export default function App() {
     }
   }
 
+  const handleTimezoneChange = async (timezone: string) => {
+    try {
+      const updated = await api.updateMe({ timezone })
+      setMe(updated)
+      showToast('Timezone updated')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not update timezone.')
+    }
+  }
+
   if (path !== '/' && path !== '/index.html') return <NotFound path={path} />
   if (!authed) return <Login onLoggedIn={handleLoggedIn} />
 
@@ -219,6 +229,7 @@ export default function App() {
               me={me}
               onOpen={(item) => setSheet({ kind: 'library', item })}
               onCoverChange={handleCoverChange}
+              onTimezoneChange={handleTimezoneChange}
               onLogout={handleLogout}
             />
           </div>

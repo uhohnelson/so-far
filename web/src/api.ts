@@ -73,7 +73,7 @@ export const api = {
 
   me: () => request<User>('/me'),
 
-  updateMe: (body: { cover_title_id: number | null }) =>
+  updateMe: (body: { cover_title_id?: number | null; timezone?: string | null }) =>
     request<User>('/me', {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -130,12 +130,6 @@ export const api = {
     request<LibraryItem>('/library', {
       method: 'POST',
       body: JSON.stringify({ status: 'want', ...body }),
-    }),
-
-  updateLibraryStatus: (id: number, status: WatchStatus) =>
-    request<LibraryItem>(`/library/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
     }),
 
   removeFromLibrary: (id: number) =>
@@ -200,4 +194,10 @@ export const api = {
       `/library/${id}/seasons/all`,
       { method: 'POST', body: JSON.stringify({}) },
     ),
+
+  setAlertMuted: (id: number, muted: boolean) =>
+    request<{ muted: boolean }>(`/library/${id}/alerts`, {
+      method: 'PATCH',
+      body: JSON.stringify({ muted }),
+    }),
 }

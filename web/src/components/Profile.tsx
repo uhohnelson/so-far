@@ -8,8 +8,20 @@ interface ProfileProps {
   me: User | null
   onOpen: (item: LibraryItem) => void
   onCoverChange: (titleId: number) => void
+  onTimezoneChange: (timezone: string) => void
   onLogout: () => void
 }
+
+const TIMEZONE_OPTIONS = [
+  { label: 'Eastern (US)', value: 'America/New_York' },
+  { label: 'Central (US)', value: 'America/Chicago' },
+  { label: 'Mountain (US)', value: 'America/Denver' },
+  { label: 'Pacific (US)', value: 'America/Los_Angeles' },
+  { label: 'London', value: 'Europe/London' },
+  { label: 'Paris', value: 'Europe/Paris' },
+  { label: 'Tokyo', value: 'Asia/Tokyo' },
+  { label: 'Sydney', value: 'Australia/Sydney' },
+]
 
 function splitMinutes(minutes: number) {
   const months = Math.floor(minutes / (30 * 24 * 60))
@@ -28,6 +40,7 @@ export default function Profile({
   me,
   onOpen,
   onCoverChange,
+  onTimezoneChange,
   onLogout,
 }: ProfileProps) {
   const [stats, setStats] = useState<Stats | null>(null)
@@ -108,6 +121,21 @@ export default function Profile({
       </header>
 
       <div className="profile-body">
+        <div className="profile-timezone">
+          <label htmlFor="profile-timezone">Alert timezone</label>
+          <select
+            id="profile-timezone"
+            value={me?.timezone || 'America/New_York'}
+            onChange={(e) => onTimezoneChange(e.target.value)}
+          >
+            {TIMEZONE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="section-label">Stats</div>
         <div className="stat-cards">
           <div className="stat-card">

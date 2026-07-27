@@ -591,6 +591,19 @@ def mark_all_episodes(
     return row, f"Marked all episodes of {row.title.title}."
 
 
+def set_user_timezone(db: Session, user: User, timezone_name: str) -> User:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone_name}") from exc
+    user.timezone = timezone_name
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def mark_episode_watched(
     db: Session, tmdb: TmdbClient, user: User, user_title_id: int
 ) -> tuple[UserTitle | None, str]:

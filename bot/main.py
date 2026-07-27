@@ -24,6 +24,7 @@ from telegram.ext import (
 )
 
 from server import services
+from server.alerts import resolve_timezone, timezone_abbr
 from server.config import get_settings
 from server.database import SessionLocal, init_db
 from server.models import MediaType, UserTitle, WatchStatus
@@ -44,9 +45,21 @@ BOT_COMMANDS = [
     BotCommand("list", "Your library"),
     BotCommand("next", "What's next"),
     BotCommand("watched", "Mark episode done"),
+    BotCommand("timezone", "Set alert timezone"),
     BotCommand("app", "Log in to the web app"),
     BotCommand("cancel", "Cancel current step"),
     BotCommand("help", "Quick tips"),
+]
+
+COMMON_TIMEZONES = [
+    ("Eastern (US)", "America/New_York"),
+    ("Central (US)", "America/Chicago"),
+    ("Mountain (US)", "America/Denver"),
+    ("Pacific (US)", "America/Los_Angeles"),
+    ("London", "Europe/London"),
+    ("Paris", "Europe/Paris"),
+    ("Tokyo", "Asia/Tokyo"),
+    ("Sydney", "Australia/Sydney"),
 ]
 
 
@@ -301,11 +314,107 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• <b>Search</b> → type → tap a result → Want / Watching / Watched\n"
         "• Filter search: <code>movie dune</code> or <code>tv the bear</code>\n"
         "• <b>Continue</b> for what's next or mark an episode\n"
+        "• <code>/timezone</code> for episode alert timing\n"
         "• Status words are always: Want · Watching · Watched"
     )
     await update.message.reply_text(
         text, reply_markup=_main_menu_keyboard(), parse_mode=ParseMode.HTML
     )
+
+
+async def timezone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    telegram_id, display_name = _user_meta(update)
+    settings = get_settings()
+    db = SessionLocal()
+    try:
+        user = services.get_or_create_user(db, telegram_id, display_name)
+        if context.args:
+            tz_name = " ".join(context.args).strip()
+            try:
+                services.set_user_timezone(db, user, tz_name)
+            except ValueError:
+                await update.message.reply_text(
+                    f"Unknown timezone <code>{html.escape(tz_name)}</code>.\n"
+                    "Use an IANA name like <code>America/Chicago</code>.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            tz = resolve_timezone(user, settings)
+            await update.message.reply_text(
+                f"Timezone set to <b>{html.escape(tz_name)}</b> "
+                f"({html.escape(timezone_abbr(tz))}).",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        tz = resolve_timezone(user, settings)
+        label = user.timezone or settings.default_timezone
+        buttons = [
+            [
+                InlineKeyboardButton(lbl, callback_data=f"tz:{iana}")
+                for lbl, iana in COMMON_TIMEZONES[i : i + 2]
+            ]
+            for i in range(0, len(COMMON_TIMEZONES), 2)
+        ]
+        buttons.append([InlineKeyboardButton("Home", callback_data="menu:home")])
+        await update.message.reply_text(
+            "<b>Timezone</b>\n"
+            f"Current: <code>{html.escape(label)}</code> "
+            f"({html.escape(timezone_abbr(tz))})\n\n"
+            "Pick a zone or send <code>/timezone America/Chicago</code>.",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML,
+        )
+    finally:
+        db.close()
+
+
+async def on_timezone_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    tz_name = query.data.split(":", 1)[1]
+    telegram_id, display_name = _user_meta(update)
+    settings = get_settings()
+    db = SessionLocal()
+    try:
+        user = services.get_or_create_user(db, telegram_id, display_name)
+        services.set_user_timezone(db, user, tz_name)
+        tz = resolve_timezone(user, settings)
+        await _edit_or_reply(
+            query,
+            f"Timezone set to <b>{html.escape(tz_name)}</b> "
+            f"({html.escape(timezone_abbr(tz))}).",
+            reply_markup=_main_menu_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+    finally:
+        db.close()
+
+
+async def on_mute_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_title_id = int(query.data.split(":")[1])
+    telegram_id, display_name = _user_meta(update)
+    db = SessionLocal()
+    try:
+        user = services.get_or_create_user(db, telegram_id, display_name)
+        row = services.get_library_row(db, user, user_title_id)
+        if not row:
+            await _edit_or_reply(query, "Title not found.", reply_markup=_main_menu_keyboard())
+            return
+        from server.alerts import set_alerts_muted
+
+        set_alerts_muted(db, user, row.title_id, True)
+        await _edit_or_reply(
+            query,
+            f"Alerts muted for <b>{html.escape(row.title.title)}</b>.\n"
+            "Use the web app or <code>/timezone</code> to adjust settings.",
+            reply_markup=_main_menu_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+    finally:
+        db.close()
 
 
 async def app_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1000,6 +1109,19 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(BOT_COMMANDS)
     logger.info("Bot commands registered with Telegram")
 
+    from bot.alerts_runner import run_episode_alerts
+
+    settings = get_settings()
+    interval = max(300, settings.alert_check_interval_sec)
+
+    async def alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+        tmdb: TmdbClient = context.application.bot_data["tmdb"]
+        await run_episode_alerts(context.bot, tmdb)
+
+    if application.job_queue:
+        application.job_queue.run_repeating(alert_job, interval=interval, first=120)
+        logger.info("Episode alert job scheduled every %s seconds", interval)
+
 
 def build_application() -> Application:
     settings = get_settings()
@@ -1015,6 +1137,7 @@ def build_application() -> Application:
     app.add_handler(InlineQueryHandler(on_inline_query))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("timezone", timezone_cmd))
     app.add_handler(CommandHandler("search", search_cmd))
     app.add_handler(CommandHandler("list", list_cmd))
     app.add_handler(CommandHandler("watching", watching_cmd))
@@ -1023,6 +1146,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("remove", remove_cmd))
     app.add_handler(CommandHandler("app", app_cmd))
     app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CallbackQueryHandler(on_timezone_pick, pattern=r"^tz:"))
+    app.add_handler(CallbackQueryHandler(on_mute_alerts, pattern=r"^mute:\d+$"))
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^menu:"))
     app.add_handler(CallbackQueryHandler(on_list_filter, pattern=r"^list:"))
     app.add_handler(CallbackQueryHandler(on_pick, pattern=r"^pick:"))

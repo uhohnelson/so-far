@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     tmdb_image_base: str = "https://image.tmdb.org/t/p/w500"
     # When unset/false, FastAPI /docs /redoc /openapi.json are disabled.
     sofar_debug: bool = False
+    # Background episode-alert poll interval (bot job queue, seconds).
+    alert_check_interval_sec: int = 3600
 
 
 @lru_cache

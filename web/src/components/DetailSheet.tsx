@@ -15,7 +15,6 @@ import type {
   SearchResult,
   Title,
   TitleDetail,
-  WatchStatus,
 } from '../types'
 import { DetailBodySkeleton, SeasonEpisodesSkeleton, ShelfSkeleton } from './Skeletons'
 import PersonSheet from './PersonSheet'
@@ -148,6 +147,7 @@ export default function DetailSheet({
   const [personId, setPersonId] = useState<number | null>(null)
   const [personName, setPersonName] = useState('')
   const [similar, setSimilar] = useState<SearchResult[] | null>(null)
+  const [alertsMuted, setAlertsMuted] = useState<boolean | null>(null)
 
   const loadSeason = async (tmdbId: number, seasonNumber: number) => {
     const cached = getCachedSeason(tmdbId, seasonNumber)
@@ -187,6 +187,7 @@ export default function DetailSheet({
     setOpenSeason(null)
     setEpisodesBySeason({})
     setSimilar(null)
+    setAlertsMuted(null)
     setTab(seedType === 'tv' ? 'episodes' : 'about')
     setConfirm(null)
     ;(async () => {
@@ -194,6 +195,7 @@ export default function DetailSheet({
         const d = await api.titleDetail(seedType, seedId)
         if (cancelled) return
         setDetail(d)
+        setAlertsMuted(d.alerts_muted ?? null)
         setTab(d.title.media_type === 'tv' ? 'episodes' : 'about')
       } catch (err) {
         if (cancelled) return
@@ -384,17 +386,17 @@ export default function DetailSheet({
       if (!window.confirm(`Remove ${title.title} from your list?`)) return
       await api.removeFromLibrary(item.id)
       setDetail({ title, library_item: null, watched_episodes: [] })
+      setAlertsMuted(null)
       onMutated(null, `Removed ${title.title}`)
     })
 
-  const setStatus = (status: WatchStatus) =>
+  const toggleAlertsMuted = () =>
     run(async () => {
-      if (!item || item.status === status) return
-      const updated = await api.updateLibraryStatus(item.id, status)
-      setDetail((prev) =>
-        prev ? { ...prev, library_item: updated } : prev,
-      )
-      onMutated(updated)
+      if (!item || alertsMuted == null) return
+      const next = !alertsMuted
+      await api.setAlertMuted(item.id, next)
+      setAlertsMuted(next)
+      onMutated(item, next ? 'Episode alerts muted' : 'Episode alerts on')
     })
 
   const markMovie = () =>
@@ -660,27 +662,22 @@ export default function DetailSheet({
             </div>
 
             <div className="sheet-body">
-              {item && (
-                <div className="status-row" role="group" aria-label="List status">
-                  {(
-                    [
-                      ['want', 'Want'],
-                      ['watching', 'Watching'],
-                      ['watched', 'Watched'],
-                    ] as const
-                  ).map(([value, label]) => (
+              {item &&
+                title.media_type === 'tv' &&
+                item.status === 'watching' &&
+                alertsMuted != null && (
+                  <label className="alert-toggle">
+                    <span>Episode alerts</span>
                     <button
-                      key={value}
                       type="button"
-                      className={item.status === value ? 'on' : ''}
+                      role="switch"
+                      aria-checked={!alertsMuted}
+                      className={alertsMuted ? '' : 'on'}
                       disabled={busy}
-                      onClick={() => setStatus(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
+                      onClick={toggleAlertsMuted}
+                    />
+                  </label>
+                )}
 
               {title.media_type === 'movie' && (
                 <div className="fact-row">

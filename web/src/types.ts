@@ -78,6 +78,7 @@ export interface TitleDetail {
   title: Title
   library_item: LibraryItem | null
   watched_episodes: string[]
+  alerts_muted?: boolean | null
 }
 
 export interface User {
@@ -85,6 +86,7 @@ export interface User {
   display_name: string | null
   cover_title_id: number | null
   cover_url: string | null
+  timezone: string | null
 }
 
 export interface Stats {
