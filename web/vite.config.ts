@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      // New SW installs, activates immediately, and reloads open tabs once.
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
@@ -21,6 +22,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
           {
