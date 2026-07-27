@@ -1,8 +1,8 @@
 # Example Caddyfile for Sofar (TLS + security headers + asset caching).
 # Copy to /etc/caddy/Caddyfile and replace the hostname.
-# __APPDIR__ is substituted by deploy/update.sh on the VPS.
+# __APPDIR__ and __HOSTNAME__ are substituted by deploy/update.sh on the VPS.
 
-sofar.example.com {
+__HOSTNAME__ {
 	encode gzip
 
 	root * __APPDIR__/web/dist

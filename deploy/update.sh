@@ -28,9 +28,21 @@ else
 fi
 
 if command -v caddy >/dev/null 2>&1 && [ -f "$APPDIR/deploy/Caddyfile" ]; then
-  sed -e "s|__APPDIR__|$APPDIR|g" \
-    "$APPDIR/deploy/Caddyfile" | sudo tee /etc/caddy/Caddyfile >/dev/null
-  sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true
+  APP_USER="${SUDO_USER:-$USER}"
+  if id caddy >/dev/null 2>&1 && id "$APP_USER" >/dev/null 2>&1; then
+    sudo usermod -aG "$APP_USER" caddy 2>/dev/null || true
+  fi
+  HOSTNAME="${SOFAR_HOSTNAME:-}"
+  if [ -z "$HOSTNAME" ] && [ -f "$APPDIR/.env" ]; then
+    HOSTNAME="$(grep -E '^WEB_APP_URL=' "$APPDIR/.env" | sed -E 's|^WEB_APP_URL=https?://||; s|/.*||')"
+  fi
+  if [ -z "$HOSTNAME" ]; then
+    echo "==> Skipping Caddyfile update (set SOFAR_HOSTNAME or WEB_APP_URL in .env)" >&2
+  else
+    sed -e "s|__APPDIR__|$APPDIR|g" -e "s|__HOSTNAME__|$HOSTNAME|g" \
+      "$APPDIR/deploy/Caddyfile" | sudo tee /etc/caddy/Caddyfile >/dev/null
+    sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true
+  fi
 fi
 
 sudo systemctl restart sofar-bot
