@@ -63,6 +63,8 @@ interface DetailSheetProps {
   onMutated: (updated: LibraryItem | null, message?: string) => void
   onError: (message: string) => void
   onOpenSearch?: (result: SearchResult) => void
+  /** overlay = full-screen sheet (mobile); panel = embedded split pane (desktop) */
+  variant?: 'overlay' | 'panel'
 }
 
 function emptyTitle(partial: Partial<Title> & Pick<Title, 'tmdb_id' | 'media_type' | 'title'>): Title {
@@ -119,7 +121,9 @@ export default function DetailSheet({
   onMutated,
   onError,
   onOpenSearch,
+  variant = 'overlay',
 }: DetailSheetProps) {
+  const isPanel = variant === 'panel'
   const seedType: MediaType =
     target.kind === 'library'
       ? target.item.title.media_type
@@ -615,9 +619,9 @@ export default function DetailSheet({
 
   return (
     <>
-      <div className="sheet-backdrop" onClick={onClose} />
+      {!isPanel && <div className="sheet-backdrop" onClick={onClose} />}
       <div
-        className={`sheet${!item && title ? ' has-add-bar' : ''}${item ? ' has-action-bar' : ''}`}
+        className={`sheet${isPanel ? ' sheet-panel' : ''}${!item && title ? ' has-add-bar' : ''}${item ? ' has-action-bar' : ''}`}
         role="dialog"
         aria-label={title?.title || 'Title'}
       >
