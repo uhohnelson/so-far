@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     sofar_debug: bool = False
     # Background episode-alert poll interval (bot job queue, seconds).
     alert_check_interval_sec: int = 3600
+    # Alert only for episodes that aired within this many days (inclusive of today).
+    # 1 = today + yesterday (covers missed hourly scans / timezone edges).
+    alert_lookback_days: int = 1
 
 
 @lru_cache

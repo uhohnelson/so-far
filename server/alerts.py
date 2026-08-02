@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
@@ -15,6 +15,9 @@ from server.models import AlertPref, AlertSent, MediaType, User, UserTitle, Watc
 from server.tmdb import EpisodeInfo, TmdbClient
 
 logger = logging.getLogger(__name__)
+
+# Default: today + yesterday. Catch-up / back-catalog episodes must not alert.
+DEFAULT_ALERT_LOOKBACK_DAYS = 1
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,21 @@ def has_aired(
     if ad is None:
         return False
     return ad <= user_today(tz, now)
+
+
+def is_recently_aired(
+    air_date: str | None,
+    tz: ZoneInfo,
+    now: datetime | None = None,
+    lookback_days: int = DEFAULT_ALERT_LOOKBACK_DAYS,
+) -> bool:
+    """True when air_date is today or within the lookback window (not future, not old catalog)."""
+    ad = parse_air_date(air_date)
+    if ad is None:
+        return False
+    today = user_today(tz, now)
+    earliest = today - timedelta(days=max(0, lookback_days))
+    return earliest <= ad <= today
 
 
 def timezone_abbr(tz: ZoneInfo, now: datetime | None = None) -> str:
@@ -140,8 +158,13 @@ def find_due_episode(
     row: UserTitle,
     tz: ZoneInfo,
     now: datetime | None = None,
+    lookback_days: int = DEFAULT_ALERT_LOOKBACK_DAYS,
 ) -> tuple[EpisodeInfo | None, bool]:
-    """First episode at/after cursor with air_date on or before today in ``tz``."""
+    """Next-up episode only if it aired today or within ``lookback_days``.
+
+    Catch-up / back-catalog (old unwatched episodes with air_date <= today) must
+    not generate Telegram alerts — those belong on the Watch list UI.
+    """
     if row.title.media_type != MediaType.tv:
         return None, False
 
@@ -157,7 +180,8 @@ def find_due_episode(
             seasons_meta = None
 
     cursor_season, cursor_episode = season, episode
-    # Walk forward from cursor; alert the first episode that has aired (incl. today).
+    # Walk forward from cursor past gaps (missing TMDB rows / no air_date).
+    # Stop at the first dated episode: alert only if it aired recently.
     for _ in range(64):
         ep = tmdb.get_episode(row.title.tmdb_id, cursor_season, cursor_episode)
         if ep is None:
@@ -172,8 +196,11 @@ def find_due_episode(
             cursor_season, cursor_episode = nxt.season, nxt.episode
             ep = nxt
 
-        if ep.air_date and has_aired(ep.air_date, tz, now):
-            return ep, is_airing_today(ep.air_date, tz, now)
+        if ep.air_date:
+            if is_recently_aired(ep.air_date, tz, now, lookback_days):
+                return ep, is_airing_today(ep.air_date, tz, now)
+            # Dated but not recent (old catalog or still upcoming) → no alert.
+            return None, False
 
         nxt = tmdb.next_episode(
             row.title.tmdb_id, cursor_season, cursor_episode, seasons_meta
@@ -193,6 +220,7 @@ def collect_alert_candidates(
 ) -> list[AlertCandidate]:
     settings = settings or get_settings()
     now = now or datetime.now(timezone.utc)
+    lookback_days = getattr(settings, "alert_lookback_days", DEFAULT_ALERT_LOOKBACK_DAYS)
     rows = db.scalars(
         select(UserTitle)
         .options(joinedload(UserTitle.title), joinedload(UserTitle.user))
@@ -208,7 +236,7 @@ def collect_alert_candidates(
         if is_alerts_muted(db, row.user_id, row.title_id):
             continue
         tz = resolve_timezone(row.user, settings)
-        ep, airing_today = find_due_episode(tmdb, row, tz, now)
+        ep, airing_today = find_due_episode(tmdb, row, tz, now, lookback_days)
         if ep is None:
             continue
         if alert_already_sent(db, row.user_id, row.title_id, ep.season, ep.episode):
