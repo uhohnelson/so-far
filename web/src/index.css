@@ -2751,6 +2751,27 @@ input {
     min-height: 0;
   }
 
+  /*
+   * Workspace overlays (right of sidebar): any full-screen sheet that isn't
+   * the list/detail panel. Covers DetailSheet mobile-style overlays if shown,
+   * PosterGridSheet, PersonSheet, and similar.
+   */
+  .sheet:not(.sheet-panel) {
+    left: 200px;
+    max-width: none;
+    margin: 0;
+  }
+
+  .sheet-backdrop {
+    left: 200px;
+  }
+
+  .grid-sheet .library-grid,
+  .person-sheet .library-grid {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+
   .bottom-nav {
     display: none;
   }
@@ -2840,13 +2861,22 @@ input {
   }
 
   .cover-picker {
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 520px;
+    left: 200px;
+    right: 0;
+    transform: none;
+    width: auto;
+    max-width: none;
+    max-height: min(85dvh, 800px);
+    border-radius: 12px 12px 0 0;
   }
 
   .cover-picker-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  /* Confirm dialogs stay as small cards; dim only the workspace */
+  .dialog-backdrop {
+    left: 200px;
   }
 
   .toast {
