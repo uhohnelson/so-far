@@ -79,6 +79,7 @@ class LibraryItemOut(BaseModel):
     status: WatchStatus
     current_season: int | None = None
     current_episode: int | None = None
+    watched_count: int = 0
     title: TitleOut
 
     model_config = {"from_attributes": True}

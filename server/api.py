@@ -16,7 +16,7 @@ from server import services
 from server.alerts import is_alerts_muted, set_alerts_muted
 from server.config import get_settings
 from server.database import get_db, init_db
-from server.models import Title, User, UserTitle, WatchStatus
+from server.models import Title, User, UserTitle, WatchEvent, WatchStatus
 from server.rate_limit import (
     exchange_limiter,
     tmdb_detail_limiter,
@@ -230,12 +230,20 @@ def create_app() -> FastAPI:
             backdrop_url=tmdb.poster_url(r.backdrop_path, size="w780"),
         )
 
-    def _library_out(row: UserTitle) -> LibraryItemOut:
+    def _watched_count_for(db: Session, user: User, title_id: int) -> int:
+        return sum(
+            1
+            for s, e in services.list_watched_episodes(db, user, title_id)
+            if (s, e) != (0, 0)
+        )
+
+    def _library_out(row: UserTitle, watched_count: int = 0) -> LibraryItemOut:
         return LibraryItemOut(
             id=row.id,
             status=row.status,
             current_season=row.current_season,
             current_episode=row.current_episode,
+            watched_count=watched_count,
             title=_title_out(row.title, lite=True),
         )
 
@@ -428,7 +436,7 @@ def create_app() -> FastAPI:
                 alerts_muted = is_alerts_muted(db, user.id, title.id)
         return TitleDetailOut(
             title=_title_out(title),
-            library_item=_library_out(row) if row else None,
+            library_item=_library_out(row, watched_count=len(watched)) if row else None,
             watched_episodes=watched,
             alerts_muted=alerts_muted,
         )
@@ -491,7 +499,17 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
     ) -> list[LibraryItemOut]:
         rows = services.list_library(db, user, status=status, limit=limit, offset=offset)
-        return [_library_out(r) for r in rows]
+        events = db.scalars(
+            select(WatchEvent).where(WatchEvent.user_id == user.id)
+        ).all()
+        counts: dict[int, int] = {}
+        for e in events:
+            if e.season == 0 and e.episode == 0:
+                continue
+            counts[e.title_id] = counts.get(e.title_id, 0) + 1
+        return [
+            _library_out(r, watched_count=counts.get(r.title_id, 0)) for r in rows
+        ]
 
     @app.post("/api/library", response_model=LibraryItemOut)
     def add_library(
@@ -510,7 +528,7 @@ def create_app() -> FastAPI:
         )
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return _library_out(row)
+        return _library_out(row, watched_count=_watched_count_for(db, user, row.title_id))
 
     @app.patch("/api/library/{user_title_id}/alerts", response_model=AlertPrefOut)
     def update_alert_pref(
@@ -542,7 +560,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Not in library")
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return _library_out(row)
+        return _library_out(row, watched_count=_watched_count_for(db, user, row.title_id))
 
     @app.delete("/api/library/{user_title_id}")
     def remove_library(
@@ -567,7 +585,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="TV title not found in library")
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return _library_out(row)
+        return _library_out(row, watched_count=_watched_count_for(db, user, row.title_id))
 
     @app.post("/api/library/{user_title_id}/watched")
     def mark_watched(
@@ -580,7 +598,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=message)
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return {"message": message, "item": _library_out(row).model_dump()}
+        return {"message": message, "item": _library_out(row, watched_count=_watched_count_for(db, user, row.title_id)).model_dump()}
 
     @app.post("/api/library/{user_title_id}/episodes")
     def mark_episode(
@@ -616,7 +634,7 @@ def create_app() -> FastAPI:
         assert updated is not None
         return {
             "message": message,
-            "item": _library_out(updated).model_dump(),
+            "item": _library_out(updated, watched_count=_watched_count_for(db, user, updated.title_id)).model_dump(),
             "previous_unwatched": previous_unwatched,
             "previous_marked": previous_marked,
         }
@@ -634,7 +652,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Not found")
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return {"item": _library_out(row).model_dump()}
+        return {"item": _library_out(row, watched_count=_watched_count_for(db, user, row.title_id)).model_dump()}
 
     @app.post("/api/library/{user_title_id}/seasons/all")
     def mark_all_seasons(
@@ -647,7 +665,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=message)
         updated = services.get_library_row(db, user, updated.id)
         assert updated is not None
-        return {"message": message, "item": _library_out(updated).model_dump()}
+        return {"message": message, "item": _library_out(updated, watched_count=_watched_count_for(db, user, updated.title_id)).model_dump()}
 
     @app.post("/api/library/{user_title_id}/seasons/{season}")
     def mark_season(
@@ -663,7 +681,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=message)
         updated = services.get_library_row(db, user, updated.id)
         assert updated is not None
-        return {"message": message, "item": _library_out(updated).model_dump()}
+        return {"message": message, "item": _library_out(updated, watched_count=_watched_count_for(db, user, updated.title_id)).model_dump()}
 
     @app.delete("/api/library/{user_title_id}/seasons/{season}")
     def unmark_season(
@@ -677,7 +695,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Not in library")
         row = services.get_library_row(db, user, row.id)
         assert row is not None
-        return {"item": _library_out(row).model_dump()}
+        return {"item": _library_out(row, watched_count=_watched_count_for(db, user, row.title_id)).model_dump()}
 
     @app.get("/api/library/{user_title_id}/episodes/preview")
     def preview_mark(

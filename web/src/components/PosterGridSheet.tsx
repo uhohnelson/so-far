@@ -31,26 +31,13 @@ function totalEps(item: LibraryItem): number | null {
   return total || null
 }
 
-function remainingEps(item: LibraryItem): number | null {
-  const seasons = item.title.seasons
-  if (!seasons || !item.current_season || !item.current_episode) return null
-  let left = 0
-  for (const s of seasons) {
-    const count = s.episode_count ?? 0
-    if (s.season_number > item.current_season) left += count
-    else if (s.season_number === item.current_season) {
-      left += Math.max(0, count - item.current_episode)
-    }
-  }
-  return left
-}
-
 function progressOf(item: LibraryItem): number {
-  if (item.title.media_type !== 'tv') return 0
+  if (item.title.media_type !== 'tv') return item.status === 'watched' ? 1 : 0
+  if (item.status === 'watched') return 1
   const total = totalEps(item)
-  const rem = remainingEps(item)
-  if (!total || rem === null) return 0
-  return Math.min(1, Math.max(0, (total - rem - 1) / total))
+  if (!total) return 0
+  const watched = item.watched_count ?? 0
+  return Math.min(1, Math.max(0, watched / total))
 }
 
 interface PosterGridSheetProps {

@@ -71,6 +71,7 @@ export interface LibraryItem {
   status: WatchStatus
   current_season: number | null
   current_episode: number | null
+  watched_count: number
   title: Title
 }
 

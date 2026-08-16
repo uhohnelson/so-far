@@ -101,6 +101,7 @@ export default function App() {
       const merged: LibraryItem = {
         ...existing,
         ...updated,
+        watched_count: updated.watched_count ?? existing.watched_count ?? 0,
         title: {
           ...existing.title,
           ...updated.title,

@@ -173,11 +173,12 @@ function remainingEps(item: LibraryItem): number | null {
 }
 
 function progressOf(item: LibraryItem): number {
-  if (item.title.media_type !== 'tv') return 0
+  if (item.title.media_type !== 'tv') return item.status === 'watched' ? 1 : 0
+  if (item.status === 'watched') return 1
   const total = totalEps(item)
-  const rem = remainingEps(item)
-  if (!total || rem === null) return 0
-  return Math.min(1, Math.max(0, (total - rem - 1) / total))
+  if (!total) return 0
+  const watched = item.watched_count ?? 0
+  return Math.min(1, Math.max(0, watched / total))
 }
 
 const SWIPE_TRIGGER = 96
@@ -284,18 +285,22 @@ export default function WatchList({
     [items, mediaType],
   )
 
-  const watching = scoped.filter((i) => {
-    if (i.status === 'watching') return true
-    // Movies on "want" that are already out live on the watch list.
-    if (
-      mediaType === 'movie' &&
-      i.status === 'want' &&
-      daysUntil(i.title.release_date) == null
-    ) {
-      return true
-    }
-    return false
-  })
+  const watching = useMemo(
+    () =>
+      scoped.filter((i) => {
+        if (i.status === 'watching') return true
+        // Movies on "want" that are already out live on the watch list.
+        if (
+          mediaType === 'movie' &&
+          i.status === 'want' &&
+          daysUntil(i.title.release_date) == null
+        ) {
+          return true
+        }
+        return false
+      }),
+    [scoped, mediaType],
+  )
 
   const watched = useMemo(
     () => scoped.filter((i) => i.status === 'watched'),
