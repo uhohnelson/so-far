@@ -37,6 +37,15 @@ function isShowFullyWatched(
   return total > 0 && watched >= total
 }
 
+function libraryCursorChanged(cur: LibraryItem, next: LibraryItem) {
+  return (
+    cur.status !== next.status ||
+    cur.current_season !== next.current_season ||
+    cur.current_episode !== next.current_episode ||
+    (cur.watched_count ?? 0) !== (next.watched_count ?? 0)
+  )
+}
+
 function celebrateIfShowCompleted(
   beforeKeys: string[],
   afterKeys: string[],
@@ -208,6 +217,12 @@ export default function DetailSheet({
         setDetail(d)
         setAlertsMuted(d.alerts_muted ?? null)
         setTab(d.title.media_type === 'tv' ? 'episodes' : 'about')
+        if (d.library_item) {
+          const prev = target.kind === 'library' ? target.item : null
+          if (!prev || libraryCursorChanged(prev, d.library_item)) {
+            onMutated(d.library_item)
+          }
+        }
       } catch (err) {
         if (cancelled) return
         onError(err instanceof Error ? err.message : 'Could not load title.')
@@ -233,7 +248,8 @@ export default function DetailSheet({
       if (
         cur.status === next.status &&
         cur.current_season === next.current_season &&
-        cur.current_episode === next.current_episode
+        cur.current_episode === next.current_episode &&
+        (cur.watched_count ?? 0) === (next.watched_count ?? 0)
       ) {
         return prev
       }
@@ -456,7 +472,8 @@ export default function DetailSheet({
     const beforeKeys = detail?.watched_episodes ?? []
     const res = await api.markEpisode(libId, s, e, markPrevious)
     const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-    applyMutation(res.item, refreshed.watched_episodes)
+    const nextItem = refreshed.library_item ?? res.item
+    applyMutation(nextItem, refreshed.watched_episodes)
     celebrateIfShowCompleted(
       beforeKeys,
       refreshed.watched_episodes,
@@ -465,7 +482,7 @@ export default function DetailSheet({
     invalidateCachedSeason(title.tmdb_id, s)
     if (markPrevious) await reloadSeasonsUpTo(title.tmdb_id, s)
     else await loadSeason(title.tmdb_id, s)
-    onMutated(res.item, res.message)
+    onMutated(nextItem, res.message)
     setConfirm(null)
   }
 
@@ -479,10 +496,11 @@ export default function DetailSheet({
       await run(async () => {
         const res = await api.unmarkEpisode(item.id, ep.season, ep.episode)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyMutation(res.item, refreshed.watched_episodes)
+        const nextItem = refreshed.library_item ?? res.item
+        applyMutation(nextItem, refreshed.watched_episodes)
         invalidateCachedSeason(title.tmdb_id, ep.season)
         await loadSeason(title.tmdb_id, ep.season)
-        onMutated(res.item)
+        onMutated(nextItem)
       })
       return
     }
@@ -538,7 +556,8 @@ export default function DetailSheet({
     const beforeKeys = detail?.watched_episodes ?? []
     const res = await api.markSeason(libId, seasonNumber, markPrevious)
     const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-    applyMutation(res.item, refreshed.watched_episodes)
+    const nextItem = refreshed.library_item ?? res.item
+    applyMutation(nextItem, refreshed.watched_episodes)
     celebrateIfShowCompleted(
       beforeKeys,
       refreshed.watched_episodes,
@@ -554,7 +573,7 @@ export default function DetailSheet({
     else if (episodesBySeason[seasonNumber]) {
       await loadSeason(title.tmdb_id, seasonNumber, true)
     }
-    onMutated(res.item, res.message)
+    onMutated(nextItem, res.message)
     setConfirm(null)
   }
 
@@ -566,12 +585,13 @@ export default function DetailSheet({
       if (complete) {
         const res = await api.unmarkSeason(lib.id, seasonNumber)
         const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyMutation(res.item, refreshed.watched_episodes)
+        const nextItem = refreshed.library_item ?? res.item
+        applyMutation(nextItem, refreshed.watched_episodes)
         invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
           await loadSeason(title.tmdb_id, seasonNumber, true)
         }
-        onMutated(res.item)
+        onMutated(nextItem)
         return
       }
       const preview = await api.previewMark(lib.id, seasonNumber, 1)
@@ -594,7 +614,8 @@ export default function DetailSheet({
       const beforeKeys = detail?.watched_episodes ?? []
       const res = await api.markAllSeasons(lib.id)
       const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-      applyMutation(res.item, refreshed.watched_episodes)
+      const nextItem = refreshed.library_item ?? res.item
+      applyMutation(nextItem, refreshed.watched_episodes)
       celebrateIfShowCompleted(
         beforeKeys,
         refreshed.watched_episodes,
@@ -602,7 +623,7 @@ export default function DetailSheet({
       )
       setEpisodesBySeason({})
       if (openSeason != null) await loadSeason(title.tmdb_id, openSeason)
-      onMutated(res.item, res.message)
+      onMutated(nextItem, res.message)
     })
 
   const metaLine = (t: Title) => {

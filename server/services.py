@@ -439,6 +439,108 @@ def previous_episodes(
     return prev
 
 
+def first_unwatched_episode(
+    title: Title, watched: set[tuple[int, int]]
+) -> tuple[int, int] | None:
+    """First unwatched episode in numbered seasons (skips season 0 specials).
+
+    Returns None when every numbered episode is watched. Returns None
+    without distinguishing "no season metadata" — callers must check
+    ``_season_map`` when they need that split.
+    """
+    counts = _season_map(title)
+    for sn in sorted(counts):
+        if sn < 1:
+            continue
+        for episode in range(1, counts[sn] + 1):
+            if (sn, episode) not in watched:
+                return sn, episode
+    return None
+
+
+def compute_watch_cursor(
+    title: Title, watched: set[tuple[int, int]]
+) -> tuple[WatchStatus, int | None, int | None] | None:
+    """Watch-next cursor from watch events + cached episode counts.
+
+    None means cached metadata has no numbered seasons, so the cursor
+    cannot be computed this way.
+    """
+    counts = _season_map(title)
+    if not any(sn >= 1 and n > 0 for sn, n in counts.items()):
+        return None
+    nxt = first_unwatched_episode(title, watched)
+    if nxt:
+        return WatchStatus.watching, nxt[0], nxt[1]
+    return WatchStatus.watched, None, None
+
+
+def sync_watch_cursor(db: Session, user: User, row: UserTitle) -> bool:
+    """Set current_season/episode to the first unwatched numbered episode.
+
+    Does not commit. Returns True when status or cursor changed.
+    """
+    if row.title.media_type != MediaType.tv:
+        return False
+    db.flush()
+    watched = list_watched_episodes(db, user, row.title_id)
+    computed = compute_watch_cursor(row.title, watched)
+    if computed is None:
+        return False
+    status, season, episode = computed
+    if (
+        row.status == status
+        and row.current_season == season
+        and row.current_episode == episode
+    ):
+        return False
+    row.status = status
+    row.current_season = season
+    row.current_episode = episode
+    return True
+
+
+def _apply_computed_cursor(
+    row: UserTitle,
+    watched: set[tuple[int, int]],
+    tmdb: TmdbClient,
+    fallback_season: int,
+    fallback_episode: int,
+) -> tuple[int, int] | None:
+    """Apply watch-next from events, or next_episode if season counts are missing.
+
+    Returns the next (season, episode), or None when the show is finished.
+    """
+    computed = compute_watch_cursor(row.title, watched)
+    if computed is not None:
+        status, season, episode = computed
+        row.status = status
+        row.current_season = season
+        row.current_episode = episode
+        if season is None or episode is None:
+            return None
+        return season, episode
+
+    seasons = None
+    if row.title.cached_metadata:
+        try:
+            seasons = json.loads(row.title.cached_metadata).get("seasons")
+        except json.JSONDecodeError:
+            seasons = None
+    nxt = tmdb.next_episode(
+        row.title.tmdb_id, fallback_season, fallback_episode, seasons
+    )
+    row.status = WatchStatus.watching
+    if nxt:
+        row.current_season = nxt.season
+        row.current_episode = nxt.episode
+        return nxt.season, nxt.episode
+    row.status = WatchStatus.watched
+    row.current_season = None
+    row.current_episode = None
+    return None
+
+
 def mark_specific_episode(
     db: Session,
     tmdb: TmdbClient,
@@ -468,23 +570,12 @@ def mark_specific_episode(
 
     _ensure_watch_event(db, user.id, row.title_id, season, episode)
 
-    seasons = None
-    if row.title.cached_metadata:
-        try:
-            seasons = json.loads(row.title.cached_metadata).get("seasons")
-        except json.JSONDecodeError:
-            seasons = None
-
-    nxt = tmdb.next_episode(row.title.tmdb_id, season, episode, seasons)
-    row.status = WatchStatus.watching
+    db.flush()
+    watched = list_watched_episodes(db, user, row.title_id)
+    nxt = _apply_computed_cursor(row, watched, tmdb, season, episode)
     if nxt:
-        row.current_season = nxt.season
-        row.current_episode = nxt.episode
-        msg = f"Marked S{season}E{episode}. Next up: S{nxt.season}E{nxt.episode}"
+        msg = f"Marked S{season}E{episode}. Next up: S{nxt[0]}E{nxt[1]}"
     else:
-        row.status = WatchStatus.watched
-        row.current_season = None
-        row.current_episode = None
         msg = f"Marked S{season}E{episode}. Show finished."
 
     db.commit()
@@ -499,9 +590,10 @@ def unmark_specific_episode(
     if not row or row.title.media_type != MediaType.tv:
         return None
     _remove_watch_event(db, user.id, row.title_id, season, episode)
-    row.status = WatchStatus.watching
-    row.current_season = season
-    row.current_episode = episode
+    if not sync_watch_cursor(db, user, row):
+        row.status = WatchStatus.watching
+        row.current_season = season
+        row.current_episode = episode
     db.commit()
     db.refresh(row)
     return row
@@ -539,24 +631,13 @@ def mark_season(
     for e in range(1, total + 1):
         _ensure_watch_event(db, user.id, row.title_id, season, e)
 
-    seasons = None
-    if row.title.cached_metadata:
-        try:
-            seasons = json.loads(row.title.cached_metadata).get("seasons")
-        except json.JSONDecodeError:
-            seasons = None
-
-    nxt = tmdb.next_episode(row.title.tmdb_id, season, total, seasons)
-    row.status = WatchStatus.watching
+    db.flush()
+    watched = list_watched_episodes(db, user, row.title_id)
+    nxt = _apply_computed_cursor(row, watched, tmdb, season, total)
     earlier = " including earlier seasons" if mark_previous and season > 1 else ""
     if nxt:
-        row.current_season = nxt.season
-        row.current_episode = nxt.episode
         msg = f"Marked season {season} complete{earlier}."
     else:
-        row.status = WatchStatus.watched
-        row.current_season = None
-        row.current_episode = None
         msg = f"Marked season {season} complete{earlier}. Show finished."
 
     db.commit()
@@ -574,9 +655,10 @@ def unmark_season(
     total = counts.get(season, 0)
     for e in range(1, total + 1):
         _remove_watch_event(db, user.id, row.title_id, season, e)
-    row.status = WatchStatus.watching
-    row.current_season = season
-    row.current_episode = 1
+    if not sync_watch_cursor(db, user, row):
+        row.status = WatchStatus.watching
+        row.current_season = season
+        row.current_episode = 1
     db.commit()
     db.refresh(row)
     return row
@@ -594,9 +676,10 @@ def mark_all_episodes(
     for season, total in counts.items():
         for e in range(1, total + 1):
             _ensure_watch_event(db, user.id, row.title_id, season, e)
-    row.status = WatchStatus.watched
-    row.current_season = None
-    row.current_episode = None
+    if not sync_watch_cursor(db, user, row):
+        row.status = WatchStatus.watched
+        row.current_season = None
+        row.current_episode = None
     db.commit()
     db.refresh(row)
     return row, f"Marked all episodes of {row.title.title}."

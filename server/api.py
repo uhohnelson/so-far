@@ -432,6 +432,10 @@ def create_app() -> FastAPI:
         watched = []
         alerts_muted = None
         if row:
+            if title.media_type.value == "tv" and row.status != WatchStatus.want:
+                if services.sync_watch_cursor(db, user, row):
+                    db.commit()
+                    db.refresh(row)
             watched = [
                 f"S{s}E{e}"
                 for s, e in services.list_watched_episodes(db, user, title.id)

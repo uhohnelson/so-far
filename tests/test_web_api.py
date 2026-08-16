@@ -436,6 +436,108 @@ def test_mark_season_only_this_season_skips_previous(client):
         ]
     )
     assert watched == {"S3E1", "S3E2", "S3E3"}
+    item = marked.json()["item"]
+    assert item["current_season"] == 1
+    assert item["current_episode"] == 1
+
+
+def test_mark_later_season_episodes_advances_stale_cursor(client):
+    """S1–S2 already watched but cursor left at S1E1; marking S3 jumps to S4E1."""
+    token = _login(client)
+    headers = _auth(token)
+    item_id = client.post(
+        "/api/library",
+        headers=headers,
+        json={
+            "tmdb_id": 97546,
+            "media_type": "tv",
+            "status": "watching",
+            "current_season": 1,
+            "current_episode": 1,
+        },
+    ).json()["id"]
+
+    assert client.post(
+        f"/api/library/{item_id}/seasons/1", headers=headers
+    ).status_code == 200
+    assert client.post(
+        f"/api/library/{item_id}/seasons/2", headers=headers
+    ).status_code == 200
+    client.post(
+        f"/api/library/{item_id}/progress",
+        headers=headers,
+        json={"season": 1, "episode": 1},
+    )
+    drifted = next(
+        i
+        for i in client.get("/api/library", headers=headers).json()
+        if i["id"] == item_id
+    )
+    assert drifted["current_season"] == 1
+    assert drifted["current_episode"] == 1
+
+    marked = None
+    for episode in (1, 2, 3):
+        marked = client.post(
+            f"/api/library/{item_id}/episodes",
+            headers=headers,
+            json={"season": 3, "episode": episode, "mark_previous": False},
+        )
+        assert marked.status_code == 200, marked.text
+
+    body = marked.json()["item"]
+    assert body["status"] == "watching"
+    assert body["current_season"] == 4
+    assert body["current_episode"] == 1
+    assert body["watched_count"] == 9
+
+
+def test_title_detail_heals_stale_watch_cursor(client):
+    token = _login(client)
+    headers = _auth(token)
+    item_id = client.post(
+        "/api/library",
+        headers=headers,
+        json={
+            "tmdb_id": 97546,
+            "media_type": "tv",
+            "status": "watching",
+            "current_season": 1,
+            "current_episode": 1,
+        },
+    ).json()["id"]
+
+    marked = client.post(f"/api/library/{item_id}/seasons/3", headers=headers)
+    assert marked.status_code == 200, marked.text
+    assert marked.json()["item"]["current_season"] == 4
+    assert marked.json()["item"]["current_episode"] == 1
+
+    client.post(
+        f"/api/library/{item_id}/progress",
+        headers=headers,
+        json={"season": 2, "episode": 1},
+    )
+    drifted = next(
+        i
+        for i in client.get("/api/library", headers=headers).json()
+        if i["id"] == item_id
+    )
+    assert drifted["current_season"] == 2
+    assert drifted["current_episode"] == 1
+
+    detail = client.get("/api/titles/tv/97546", headers=headers).json()
+    lib = detail["library_item"]
+    assert lib["status"] == "watching"
+    assert lib["current_season"] == 4
+    assert lib["current_episode"] == 1
+
+    healed = next(
+        i
+        for i in client.get("/api/library", headers=headers).json()
+        if i["id"] == item_id
+    )
+    assert healed["current_season"] == 4
+    assert healed["current_episode"] == 1
 
 
 def test_code_is_single_use(client):
@@ -525,7 +627,8 @@ def test_add_progress_and_remove_flow(client):
     assert res.json()["current_episode"] == 4
 
     res = client.post(f"/api/library/{item_id}/watched", headers=_auth(token))
-    assert res.json()["item"]["current_episode"] == 5
+    assert res.json()["item"]["current_season"] == 1
+    assert res.json()["item"]["current_episode"] == 1
 
     assert client.delete(f"/api/library/{item_id}", headers=_auth(token)).status_code == 200
 
