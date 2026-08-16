@@ -141,31 +141,38 @@ export default function DetailSheet({
   )
   const [openSeason, setOpenSeason] = useState<number | null>(null)
   const [episodesBySeason, setEpisodesBySeason] = useState<
-    Record<number, Episode[] | 'loading'>
+    Record<number, Episode[] | 'loading' | 'error'>
   >({})
-  const [confirm, setConfirm] = useState<{
-    season: number
-    episode: number
-    previous: number
-  } | null>(null)
+  const [confirm, setConfirm] = useState<
+    | { kind: 'episode'; season: number; episode: number; previous: number }
+    | { kind: 'season'; season: number; previous: number }
+    | null
+  >(null)
   const [personId, setPersonId] = useState<number | null>(null)
   const [personName, setPersonName] = useState('')
   const [similar, setSimilar] = useState<SearchResult[] | null>(null)
   const [alertsMuted, setAlertsMuted] = useState<boolean | null>(null)
 
-  const loadSeason = async (tmdbId: number, seasonNumber: number) => {
-    const cached = getCachedSeason(tmdbId, seasonNumber)
-    if (cached) {
-      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: cached }))
-      return
+  const loadSeason = async (
+    tmdbId: number,
+    seasonNumber: number,
+    force = false,
+  ) => {
+    if (!force) {
+      const cached = getCachedSeason(tmdbId, seasonNumber)
+      if (cached && cached.length > 0) {
+        setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: cached }))
+        return
+      }
     }
     setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: 'loading' }))
     try {
-      const episodes = await loadSeasonEpisodes(tmdbId, seasonNumber)
+      const episodes = await loadSeasonEpisodes(tmdbId, seasonNumber, {
+        force,
+      })
       setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: episodes }))
     } catch {
-      setCachedSeason(tmdbId, seasonNumber, [])
-      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: [] }))
+      setEpisodesBySeason((prev) => ({ ...prev, [seasonNumber]: 'error' }))
     }
   }
 
@@ -175,7 +182,7 @@ export default function DetailSheet({
       .map((s) => s.season_number)
       .filter((n) => n <= throughSeason)
     const targets = numbers.length ? numbers : [throughSeason]
-    await Promise.all(targets.map((n) => loadSeason(tmdbId, n)))
+    await Promise.all(targets.map((n) => loadSeason(tmdbId, n, true)))
   }
 
   const refreshDetail = async (tmdbId: number, mediaType: MediaType) => {
@@ -259,8 +266,13 @@ export default function DetailSheet({
     }
     setOpenSeason(seasonNumber)
     if (!detail) return
-    if (episodesBySeason[seasonNumber] == null) {
-      loadSeason(detail.title.tmdb_id, seasonNumber)
+    const cached = episodesBySeason[seasonNumber]
+    const needsFetch =
+      cached == null ||
+      cached === 'error' ||
+      (Array.isArray(cached) && cached.length === 0)
+    if (needsFetch) {
+      loadSeason(detail.title.tmdb_id, seasonNumber, cached != null)
     }
   }
 
@@ -280,7 +292,7 @@ export default function DetailSheet({
   ) => {
     setEpisodesBySeason((prev) => {
       const cached = prev[seasonNumber]
-      if (!cached || cached === 'loading') return prev
+      if (!cached || cached === 'loading' || cached === 'error') return prev
       const next = cached.map(patch)
       if (title) setCachedSeason(title.tmdb_id, seasonNumber, next)
       return { ...prev, [seasonNumber]: next }
@@ -496,6 +508,7 @@ export default function DetailSheet({
       const preview = await api.previewMark(libId, ep.season, ep.episode)
       if (preview.previous_unwatched > 0) {
         setConfirm({
+          kind: 'episode',
           season: ep.season,
           episode: ep.episode,
           previous: preview.previous_unwatched,
@@ -510,6 +523,41 @@ export default function DetailSheet({
     }
   }
 
+  const doMarkSeason = async (
+    seasonNumber: number,
+    markPrevious: boolean,
+    libraryId?: number,
+  ) => {
+    if (!title) return
+    let libId = libraryId
+    if (!libId) {
+      const lib = await ensureLibrary()
+      if (!lib) return
+      libId = lib.id
+    }
+    const beforeKeys = detail?.watched_episodes ?? []
+    const res = await api.markSeason(libId, seasonNumber, markPrevious)
+    const refreshed = await refreshDetail(title.tmdb_id, 'tv')
+    applyMutation(res.item, refreshed.watched_episodes)
+    celebrateIfShowCompleted(
+      beforeKeys,
+      refreshed.watched_episodes,
+      title.seasons,
+    )
+    const seasons = title.seasons || []
+    for (const s of seasons) {
+      if (s.season_number >= 1 && s.season_number <= seasonNumber) {
+        invalidateCachedSeason(title.tmdb_id, s.season_number)
+      }
+    }
+    if (markPrevious) await reloadSeasonsUpTo(title.tmdb_id, seasonNumber)
+    else if (episodesBySeason[seasonNumber]) {
+      await loadSeason(title.tmdb_id, seasonNumber, true)
+    }
+    onMutated(res.item, res.message)
+    setConfirm(null)
+  }
+
   const onToggleSeason = (seasonNumber: number, complete: boolean) =>
     run(async () => {
       if (!title) return
@@ -521,25 +569,21 @@ export default function DetailSheet({
         applyMutation(res.item, refreshed.watched_episodes)
         invalidateCachedSeason(title.tmdb_id, seasonNumber)
         if (episodesBySeason[seasonNumber]) {
-          await loadSeason(title.tmdb_id, seasonNumber)
+          await loadSeason(title.tmdb_id, seasonNumber, true)
         }
         onMutated(res.item)
-      } else {
-        const beforeKeys = detail?.watched_episodes ?? []
-        const res = await api.markSeason(lib.id, seasonNumber)
-        const refreshed = await refreshDetail(title.tmdb_id, 'tv')
-        applyMutation(res.item, refreshed.watched_episodes)
-        celebrateIfShowCompleted(
-          beforeKeys,
-          refreshed.watched_episodes,
-          title.seasons,
-        )
-        invalidateCachedSeason(title.tmdb_id, seasonNumber)
-        if (episodesBySeason[seasonNumber]) {
-          await loadSeason(title.tmdb_id, seasonNumber)
-        }
-        onMutated(res.item, res.message)
+        return
       }
+      const preview = await api.previewMark(lib.id, seasonNumber, 1)
+      if (preview.previous_unwatched > 0) {
+        setConfirm({
+          kind: 'season',
+          season: seasonNumber,
+          previous: preview.previous_unwatched,
+        })
+        return
+      }
+      await doMarkSeason(seasonNumber, true, lib.id)
     })
 
   const onMarkAll = () =>
@@ -920,6 +964,27 @@ export default function DetailSheet({
                             <div className="season-body">
                               {cached === 'loading' || cached == null ? (
                                 <SeasonEpisodesSkeleton />
+                              ) : cached === 'error' ||
+                                (Array.isArray(cached) &&
+                                  cached.length === 0 &&
+                                  (s.episode_count ?? 0) > 0) ? (
+                                <div className="season-load-error">
+                                  <p>Couldn’t load episodes.</p>
+                                  <button
+                                    type="button"
+                                    className="season-retry"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      loadSeason(
+                                        title.tmdb_id,
+                                        s.season_number,
+                                        true,
+                                      )
+                                    }
+                                  >
+                                    Try again
+                                  </button>
+                                </div>
                               ) : cached.length === 0 ? (
                                 <div className="empty">
                                   No episodes found for this season.
@@ -1025,7 +1090,7 @@ export default function DetailSheet({
         )}
       </div>
 
-      {confirm && (
+      {confirm && confirm.kind === 'episode' && (
         <div className="dialog-backdrop">
           <div className="dialog" role="alertdialog">
             <h3>Mark earlier episodes too?</h3>
@@ -1039,16 +1104,60 @@ export default function DetailSheet({
               <button
                 className="dialog-secondary"
                 disabled={busy}
-                onClick={() => doMarkEpisode(confirm.season, confirm.episode, false)}
+                onClick={() =>
+                  doMarkEpisode(confirm.season, confirm.episode, false)
+                }
               >
                 Only this one
               </button>
               <button
                 className="dialog-primary"
                 disabled={busy}
-                onClick={() => doMarkEpisode(confirm.season, confirm.episode, true)}
+                onClick={() =>
+                  doMarkEpisode(confirm.season, confirm.episode, true)
+                }
               >
                 Mark all previous
+              </button>
+            </div>
+            <button
+              className="dialog-cancel"
+              disabled={busy}
+              onClick={() => setConfirm(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {confirm && confirm.kind === 'season' && (
+        <div className="dialog-backdrop">
+          <div className="dialog" role="alertdialog">
+            <h3>Mark earlier seasons too?</h3>
+            <p>
+              You marked Season {confirm.season} complete. There{' '}
+              {confirm.previous === 1 ? 'is' : 'are'}{' '}
+              <strong>{confirm.previous}</strong> earlier episode
+              {confirm.previous === 1 ? '' : 's'} not marked yet.
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="dialog-secondary"
+                disabled={busy}
+                onClick={() =>
+                  run(() => doMarkSeason(confirm.season, false))
+                }
+              >
+                Only this season
+              </button>
+              <button
+                className="dialog-primary"
+                disabled={busy}
+                onClick={() =>
+                  run(() => doMarkSeason(confirm.season, true))
+                }
+              >
+                Mark previous seasons
               </button>
             </div>
             <button

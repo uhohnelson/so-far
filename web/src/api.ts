@@ -178,10 +178,13 @@ export const api = {
       { method: 'DELETE' },
     ),
 
-  markSeason: (id: number, season: number) =>
+  markSeason: (id: number, season: number, markPrevious = true) =>
     request<{ message: string; item: LibraryItem }>(
       `/library/${id}/seasons/${season}`,
-      { method: 'POST', body: JSON.stringify({}) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ mark_previous: markPrevious }),
+      },
     ),
 
   unmarkSeason: (id: number, season: number) =>

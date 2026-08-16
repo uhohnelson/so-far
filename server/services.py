@@ -513,8 +513,14 @@ def mark_season(
     user: User,
     user_title_id: int,
     season: int,
+    mark_previous: bool = True,
 ) -> tuple[UserTitle | None, str]:
-    """Mark every episode in a season as watched."""
+    """Mark every episode in a season as watched.
+
+    If mark_previous, also mark earlier seasons — same set as
+    previous_episodes() / episode mark_previous (includes specials
+    only when they are already in cached season metadata).
+    """
     row = get_library_row(db, user, user_title_id)
     if not row:
         return None, "Title not found in your list."
@@ -525,6 +531,10 @@ def mark_season(
     total = counts.get(season)
     if not total:
         return None, f"No episodes found for season {season}."
+
+    if mark_previous:
+        for s, e in previous_episodes(row.title, season, 1):
+            _ensure_watch_event(db, user.id, row.title_id, s, e)
 
     for e in range(1, total + 1):
         _ensure_watch_event(db, user.id, row.title_id, season, e)
@@ -538,15 +548,16 @@ def mark_season(
 
     nxt = tmdb.next_episode(row.title.tmdb_id, season, total, seasons)
     row.status = WatchStatus.watching
+    earlier = " including earlier seasons" if mark_previous and season > 1 else ""
     if nxt:
         row.current_season = nxt.season
         row.current_episode = nxt.episode
-        msg = f"Marked season {season} complete."
+        msg = f"Marked season {season} complete{earlier}."
     else:
         row.status = WatchStatus.watched
         row.current_season = None
         row.current_episode = None
-        msg = f"Marked season {season} complete. Show finished."
+        msg = f"Marked season {season} complete{earlier}. Show finished."
 
     db.commit()
     db.refresh(row)

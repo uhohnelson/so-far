@@ -20,6 +20,16 @@ from server.tmdb import (
 
 
 class FakeTmdb:
+    """In-memory TMDB stand-in. 1396 = one-season show; 97546 = four seasons."""
+
+    _SEASON_COUNTS = {
+        1396: {1: 7},
+        97546: {1: 3, 2: 3, 3: 3, 4: 3},
+    }
+
+    def _counts(self, tmdb_id):
+        return self._SEASON_COUNTS.get(tmdb_id, {1: 7})
+
     def search(self, query, limit=8, media_type=None):
         return [
             SearchResult(
@@ -53,6 +63,35 @@ class FakeTmdb:
         ]
 
     def get_title(self, media_type, tmdb_id):
+        if tmdb_id == 97546:
+            counts = self._counts(tmdb_id)
+            return TitleDetail(
+                tmdb_id=tmdb_id,
+                media_type="tv",
+                title="Ted Lasso",
+                year=2020,
+                overview="A football coach.",
+                poster_path="/tl.jpg",
+                backdrop_path="/tl-bd.jpg",
+                tagline="Believe",
+                genres=["Comedy"],
+                runtime=30,
+                status="Returning Series",
+                vote_average=8.0,
+                networks=["Apple TV+"],
+                number_of_seasons=4,
+                number_of_episodes=12,
+                seasons=[
+                    SeasonSummary(
+                        season_number=sn, episode_count=n, name=f"Season {sn}"
+                    )
+                    for sn, n in counts.items()
+                ],
+                cast=[],
+                release_date="2020-08-14",
+                trailer_key=None,
+                providers=[],
+            )
         return TitleDetail(
             tmdb_id=tmdb_id,
             media_type=media_type,
@@ -85,6 +124,7 @@ class FakeTmdb:
         )
 
     def get_season_episodes(self, tmdb_id, season):
+        total = self._counts(tmdb_id).get(season, 0)
         return [
             EpisodeInfo(
                 season=season,
@@ -95,12 +135,19 @@ class FakeTmdb:
                 still_path=f"/e{i}.jpg",
                 runtime=47,
             )
-            for i in range(1, 8)
+            for i in range(1, total + 1)
         ]
 
     def next_episode(self, tmdb_id, season, episode, seasons=None):
-        if episode < 7:
-            return EpisodeInfo(season=season, episode=episode + 1, name="Next", air_date=None)
+        counts = self._counts(tmdb_id)
+        total = counts.get(season, 0)
+        if episode < total:
+            return EpisodeInfo(
+                season=season, episode=episode + 1, name="Next", air_date=None
+            )
+        for sn in sorted(counts):
+            if sn > season:
+                return EpisodeInfo(season=sn, episode=1, name="Next", air_date=None)
         return None
 
     def poster_url(self, poster_path, size="w500"):
@@ -323,6 +370,72 @@ def test_season_episodes_and_mark_previous(client):
     watched_flags = [e["watched"] for e in eps2.json()["episodes"]]
     assert watched_flags[:5] == [True, True, True, True, True]
     assert watched_flags[5] is False
+
+
+def test_mark_later_season_marks_previous_seasons(client):
+    token = _login(client)
+    item = client.post(
+        "/api/library",
+        headers=_auth(token),
+        json={
+            "tmdb_id": 97546,
+            "media_type": "tv",
+            "status": "watching",
+            "current_season": 1,
+            "current_episode": 1,
+        },
+    ).json()
+    item_id = item["id"]
+    assert item["current_season"] == 1
+    assert item["current_episode"] == 1
+
+    marked = client.post(
+        f"/api/library/{item_id}/seasons/3", headers=_auth(token)
+    )
+    assert marked.status_code == 200, marked.text
+    body = marked.json()["item"]
+    assert body["status"] == "watching"
+    assert body["current_season"] == 4
+    assert body["current_episode"] == 1
+    assert body["watched_count"] == 9
+
+    detail = client.get("/api/titles/tv/97546", headers=_auth(token)).json()
+    watched = set(detail["watched_episodes"])
+    for season in (1, 2, 3):
+        for episode in range(1, 4):
+            assert f"S{season}E{episode}" in watched
+    assert "S4E1" not in watched
+    assert detail["library_item"]["status"] == "watching"
+    assert detail["library_item"]["current_season"] == 4
+    assert detail["library_item"]["current_episode"] == 1
+
+
+def test_mark_season_only_this_season_skips_previous(client):
+    token = _login(client)
+    item_id = client.post(
+        "/api/library",
+        headers=_auth(token),
+        json={
+            "tmdb_id": 97546,
+            "media_type": "tv",
+            "status": "watching",
+            "current_season": 1,
+            "current_episode": 1,
+        },
+    ).json()["id"]
+
+    marked = client.post(
+        f"/api/library/{item_id}/seasons/3",
+        headers=_auth(token),
+        json={"mark_previous": False},
+    )
+    assert marked.status_code == 200, marked.text
+    watched = set(
+        client.get("/api/titles/tv/97546", headers=_auth(token)).json()[
+            "watched_episodes"
+        ]
+    )
+    assert watched == {"S3E1", "S3E2", "S3E3"}
 
 
 def test_code_is_single_use(client):

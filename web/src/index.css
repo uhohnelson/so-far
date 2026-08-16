@@ -2048,6 +2048,27 @@ input {
   border-top: 0;
 }
 
+.season-load-error {
+  text-align: center;
+  color: var(--muted);
+  padding: 20px 16px 16px;
+  font-size: 14px;
+}
+
+.season-load-error p {
+  margin: 0;
+}
+
+.season-retry {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  background: var(--soft);
+  color: var(--ink);
+}
+
 .season-body .episode-list {
   gap: 6px;
   margin: 0 14px;

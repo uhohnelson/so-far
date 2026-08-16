@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -77,7 +78,10 @@ class TitleDetail:
 
 _LIST_CACHE_TTL_SEC = 30 * 60
 _SEASON_CACHE_TTL_SEC = 30 * 60
+_SEASON_EMPTY_CACHE_TTL_SEC = 60
 _SEASON_CACHE_MAX = 200
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -132,9 +136,14 @@ class TmdbClient:
         self._season_cache.move_to_end(key)
         return entry.episodes
 
-    def _season_cache_set(self, key: tuple[int, int], episodes: list[EpisodeInfo]) -> None:
+    def _season_cache_set(
+        self,
+        key: tuple[int, int],
+        episodes: list[EpisodeInfo],
+        ttl: float | None = None,
+    ) -> None:
         self._season_cache[key] = _SeasonCacheEntry(
-            time.monotonic() + _SEASON_CACHE_TTL_SEC,
+            time.monotonic() + (ttl if ttl is not None else _SEASON_CACHE_TTL_SEC),
             episodes,
         )
         self._season_cache.move_to_end(key)
@@ -370,8 +379,19 @@ class TmdbClient:
             data = self._get(f"/tv/{tmdb_id}/season/{season}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                self._season_cache_set(cache_key, [])
+                logger.warning(
+                    "TMDB season 404 tmdb_id=%s season=%s", tmdb_id, season
+                )
+                self._season_cache_set(
+                    cache_key, [], ttl=_SEASON_EMPTY_CACHE_TTL_SEC
+                )
                 return []
+            logger.warning(
+                "TMDB season error tmdb_id=%s season=%s status=%s",
+                tmdb_id,
+                season,
+                exc.response.status_code,
+            )
             raise
         episodes: list[EpisodeInfo] = []
         for ep in data.get("episodes", []):
@@ -387,7 +407,15 @@ class TmdbClient:
                 )
             )
         result = [e for e in episodes if e.episode > 0]
-        self._season_cache_set(cache_key, result)
+        if not result:
+            logger.info(
+                "TMDB season empty tmdb_id=%s season=%s", tmdb_id, season
+            )
+            self._season_cache_set(
+                cache_key, [], ttl=_SEASON_EMPTY_CACHE_TTL_SEC
+            )
+        else:
+            self._season_cache_set(cache_key, result)
         return result
 
     def get_episode(self, tmdb_id: int, season: int, episode: int) -> EpisodeInfo | None:

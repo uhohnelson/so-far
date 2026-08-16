@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -35,6 +36,7 @@ from server.schemas import (
     LibraryItemOut,
     LibraryStatusIn,
     MarkEpisodeIn,
+    MarkSeasonIn,
     PersonOut,
     ProgressIn,
     ProviderOut,
@@ -48,6 +50,8 @@ from server.schemas import (
     UserUpdateIn,
 )
 from server.tmdb import TmdbClient
+
+logger = logging.getLogger(__name__)
 
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
@@ -474,8 +478,23 @@ def create_app() -> FastAPI:
         _enforce_tmdb_limit(tmdb_season_limiter, request, user)
         title = services.upsert_title_from_tmdb(db, tmdb, "tv", tmdb_id)
         watched = services.list_watched_episodes(db, user, title.id)
+        try:
+            raw = tmdb.get_season_episodes(tmdb_id, season)
+        except Exception:
+            logger.exception(
+                "Failed to load TMDB season episodes tmdb_id=%s season=%s",
+                tmdb_id,
+                season,
+            )
+            raise HTTPException(
+                status_code=502, detail="Could not load episodes for this season."
+            ) from None
+        if not raw:
+            logger.info(
+                "TMDB returned no episodes tmdb_id=%s season=%s", tmdb_id, season
+            )
         episodes = []
-        for ep in tmdb.get_season_episodes(tmdb_id, season):
+        for ep in raw:
             episodes.append(
                 EpisodeOut(
                     season=ep.season,
@@ -673,9 +692,10 @@ def create_app() -> FastAPI:
         season: int,
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
+        body: MarkSeasonIn = Body(default_factory=MarkSeasonIn),
     ) -> dict:
         updated, message = services.mark_season(
-            db, tmdb, user, user_title_id, season
+            db, tmdb, user, user_title_id, season, mark_previous=body.mark_previous
         )
         if not updated:
             raise HTTPException(status_code=404, detail=message)

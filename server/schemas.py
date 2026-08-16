@@ -123,6 +123,10 @@ class MarkEpisodeIn(BaseModel):
     mark_previous: bool = False
 
 
+class MarkSeasonIn(BaseModel):
+    mark_previous: bool = True
+
+
 class ExchangeCodeIn(BaseModel):
     code: str = Field(min_length=4, max_length=16)
 

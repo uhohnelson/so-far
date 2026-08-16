@@ -3,7 +3,14 @@ import type { Episode } from './types'
 
 type SeasonKey = string
 
-const cache = new Map<SeasonKey, Episode[]>()
+type CacheEntry =
+  | { kind: 'ok'; episodes: Episode[] }
+  | { kind: 'miss'; until: number }
+
+/** Empty / failed season fetches are retried after this, not stored as success. */
+const MISS_TTL_MS = 60_000
+
+const cache = new Map<SeasonKey, CacheEntry>()
 const inflight = new Map<SeasonKey, Promise<Episode[]>>()
 
 function key(tmdbId: number, season: number): SeasonKey {
@@ -14,7 +21,9 @@ export function getCachedSeason(
   tmdbId: number,
   season: number,
 ): Episode[] | undefined {
-  return cache.get(key(tmdbId, season))
+  const entry = cache.get(key(tmdbId, season))
+  if (entry?.kind === 'ok' && entry.episodes.length > 0) return entry.episodes
+  return undefined
 }
 
 export function setCachedSeason(
@@ -22,7 +31,12 @@ export function setCachedSeason(
   season: number,
   episodes: Episode[],
 ) {
-  cache.set(key(tmdbId, season), episodes)
+  const k = key(tmdbId, season)
+  if (episodes.length === 0) {
+    cache.delete(k)
+    return
+  }
+  cache.set(k, { kind: 'ok', episodes })
 }
 
 export function invalidateCachedSeason(tmdbId: number, season: number) {
@@ -38,15 +52,15 @@ function episodeKey(season: number, episode: number) {
 /** Patch watched flags on every cached season for a show. */
 export function patchCachedWatched(tmdbId: number, watchedKeys: string[]) {
   const prefix = `${tmdbId}:`
-  for (const [k, eps] of cache.entries()) {
-    if (!k.startsWith(prefix)) continue
-    cache.set(
-      k,
-      eps.map((ep) => ({
+  for (const [k, entry] of cache.entries()) {
+    if (!k.startsWith(prefix) || entry.kind !== 'ok') continue
+    cache.set(k, {
+      kind: 'ok',
+      episodes: entry.episodes.map((ep) => ({
         ...ep,
         watched: watchedKeys.includes(episodeKey(ep.season, ep.episode)),
       })),
-    )
+    })
   }
 }
 
@@ -77,10 +91,20 @@ export async function mapLimit<T, R>(
 export function loadSeasonEpisodes(
   tmdbId: number,
   season: number,
+  opts?: { force?: boolean },
 ): Promise<Episode[]> {
   const k = key(tmdbId, season)
-  const hit = cache.get(k)
-  if (hit) return Promise.resolve(hit)
+  if (!opts?.force) {
+    const hit = cache.get(k)
+    if (hit?.kind === 'ok' && hit.episodes.length > 0) {
+      return Promise.resolve(hit.episodes)
+    }
+    if (hit?.kind === 'miss' && Date.now() < hit.until) {
+      return Promise.resolve([])
+    }
+  } else {
+    cache.delete(k)
+  }
 
   const pending = inflight.get(k)
   if (pending) return pending
@@ -88,12 +112,17 @@ export function loadSeasonEpisodes(
   const req = api
     .seasonEpisodes(tmdbId, season)
     .then((res) => {
-      cache.set(k, res.episodes)
+      if (res.episodes.length > 0) {
+        cache.set(k, { kind: 'ok', episodes: res.episodes })
+      } else {
+        cache.set(k, { kind: 'miss', until: Date.now() + MISS_TTL_MS })
+      }
       inflight.delete(k)
       return res.episodes
     })
     .catch((err) => {
       inflight.delete(k)
+      cache.set(k, { kind: 'miss', until: Date.now() + MISS_TTL_MS })
       throw err
     })
 
@@ -106,7 +135,7 @@ export function episodeName(
   season: number,
   episode: number,
 ): string | undefined {
-  const eps = cache.get(key(tmdbId, season))
+  const eps = getCachedSeason(tmdbId, season)
   if (!eps) return undefined
   return eps.find((e) => e.episode === episode)?.name ?? ''
 }
